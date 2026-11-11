@@ -1,0 +1,37 @@
+{
+  "game_version": "1.6.15.24356",
+  "steam_path": "D:/Software/Steam/steamapps/common/Stardew Valley",
+  "interface": {
+    "clock_frame": { "texture": "Cursors", "rect": [333, 431, 71, 43], "draw_scale": 4 },
+    "weather_icon": { "texture": "Cursors", "rect": [317, 421, 12, 8], "draw_scale": 4 },
+    "season_icon": { "texture": "Cursors", "rect": [406, 441, 12, 8], "draw_scale": 4 },
+    "clock_hand": { "texture": "Cursors", "rect": [324, 477, 7, 19], "draw_scale": 4 },
+    "money_box": { "texture": "Cursors", "rect": [340, 472, 65, 17], "draw_scale": 4 },
+    "stamina_top": { "texture": "Cursors", "rect": [256, 408, 12, 16], "draw_scale": 4 },
+    "stamina_middle": { "texture": "Cursors", "rect": [256, 424, 12, 16] },
+    "stamina_bottom": { "texture": "Cursors", "rect": [256, 448, 12, 16], "draw_scale": 4 },
+    "toolbar_background": { "texture": "MenuTiles", "rect": [0, 256, 60, 60], "nine_slice_size": 20 },
+    "toolbar_slot": { "texture": "MenuTiles", "tile_index": 10, "tile_size": 64 },
+    "toolbar_slot_selected": { "texture": "MenuTiles", "tile_index": 56, "tile_size": 64 }
+  },
+  "items": {
+    "phone": "(BC)214 Telephone",
+    "computer": "(BC)239 Farm Computer",
+    "jukebox": "(BC)209 Mini-Jukebox",
+    "coffee": "(O)395 Coffee",
+    "breakfast": "(O)211 Complete Breakfast",
+    "pizza": "(O)206 Pizza",
+    "sunflower": "(O)421 Sunflower",
+    "flower": "(O)18 Daffodil",
+    "axe": "Tool menu index 215",
+    "pickaxe": "Tool menu index 131",
+    "hoe": "Tool menu index 47",
+    "wateringCan": "Tool menu index 296",
+    "fishingRod": "Tool menu index 8"
+  },
+  "fonts": {
+    "dialogue": "SpriteFont1.zh-CN",
+    "small": "SmallFont.zh-CN",
+    "tiny": "tinyFont"
+  }
+}

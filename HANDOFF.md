@@ -1,0 +1,622 @@
+# 星露谷风 Vlog HUD 编辑器交接文档
+
+交接日期：2026-11-11（第二轮迭代）
+项目目录：§D:\Agent\stardew-vlog-ui-exact§
+当前完成度：可本地使用的 Vlog HUD 编辑器、关键帧动画工具和 MP4 合成导出工具；本轮补齐了时间轴、撤销重做、工程持久化（v2 + 迁移 + 自动保存）和图层关键帧。
+
+## 1. 项目目标
+
+这个项目用于给生活 Vlog 叠加《星露谷物语》原版 HUD，包括：
+
+- 原版时钟、日期、天气、季节、金币栏
+- 原版纵向体力条
+- 原版 12 格工具栏
+- 中文游戏 SpriteFont 字幕框
+- 横屏 16:9 和竖屏 9:16
+- 视频关键帧控制
+- MP4 视频与 HUD 合成导出
+- HUD 模块显示、隐藏、拖动、缩放、替换图片
+- 可选 OpenAI Images API 像素图生成
+
+素材来自用户本机 Steam 安装的正版游戏：
+
+§D:\Software\Steam\steamapps\common\Stardew Valley§
+
+不要重新设计一套“类似风”的 UI。这个项目的核心要求是直接使用原版游戏资源。
+
+## 2. 最快运行方式
+
+直接双击：
+
+§§§text
+overlay.html
+§§§
+
+普通编辑、关键帧和 MP4 导出都能在 §file://§ 下工作。
+
+AI 生图需要本地代理，双击：
+
+§§§text
+start-overlay.cmd
+§§§
+
+它会执行 §node server.mjs§ 并打开：
+
+§§§text
+http://127.0.0.1:8766/overlay.html
+§§§
+
+命令行方式：
+
+§§§powershell
+cd D:\Agent\stardew-vlog-ui-exact
+npm start
+§§§
+
+项目没有第三方 Node 运行时依赖。Node.js 需要支持 ESM、§fetch()§ 和 §import.meta.dirname§。
+
+## 3. 非常重要的构建关系
+
+页面实际加载的是 §app-bundle.js§，不是 §app.js§。
+
+源码关系：
+
+§§§text
+app.js
+items.js
+spritefont.js
+assets/stardew/*.png
+assets/stardew/*.json
+assets/items/*.png
+        |
+        v
+scripts/build-bundle.mjs
+        |
+        v
+app-bundle.js
+        |
+        v
+overlay.html
+§§§
+
+修改以下文件后必须重新构建：
+
+- §app.js§
+- §items.js§
+- §spritefont.js§
+- §assets/items/§ 中的图片
+- 字体图集、字体 JSON、§Cursors.png§ 或 §MenuTiles.png§
+
+构建命令：
+
+§§§powershell
+cd D:\Agent\stardew-vlog-ui-exact
+npm run build
+§§§
+
+等价命令：
+
+§§§powershell
+node scripts/build-bundle.mjs
+§§§
+
+不要手动修改 §app-bundle.js§。它由构建脚本重新生成。
+
+构建脚本靠字面量替换改写资源路径，因此下面这些写法的代码行必须保持原样（新增代码时不要改写成别的形式）：
+
+- §loadImage("./assets/stardew/Cursors.png")§ / §MenuTiles.png§
+- §loadSpriteFont("./assets/stardew/...json", "./assets/stardew/...png")§ 三处
+- §"./assets/items/" + item.source + ".png"§
+- §"./assets/ui/heart.png"§
+- §await Promise.all(Object.entries(ITEMS)§ 这一行的开头
+- 文件顶部的 §import ...§ 行（构建时整行删除）
+
+## 4. 为什么需要 app-bundle.js
+
+直接通过 §file://§ 打开页面时，浏览器会阻止 ES Module、JSON fetch 和部分本地资源读取。更麻烦的是，本地图片一旦画入 Canvas，Canvas 会变为跨域污染状态，随后无法执行 §captureStream()§，导致视频导出失败。
+
+§scripts/build-bundle.mjs§ 会：
+
+1. 把 §app.js§、§items.js§、§spritefont.js§ 转成普通脚本并合并。
+2. 把中文字体数据和字形 JSON 内嵌进 bundle。
+3. 把时钟、菜单、字体、物品图片转成 Base64 Data URL 内嵌。
+4. 生成可离线运行的 §app-bundle.js§。
+
+因此：
+
+- 页面可以直接双击打开。
+- Canvas 保持 origin-clean。
+- MediaRecorder 可以正常录制 Canvas。
+- ZIP 体积会比源码大，这是内嵌素材造成的。
+
+## 5. 主要文件
+
+| 文件 | 职责 |
+| --- | --- |
+| §overlay.html§ | 页面结构、时间轴、底部编辑工作区、顶部分页导航 |
+| §style.css§ | 页面、预览舞台、时间轴、拖动框和按钮样式 |
+| §app.js§ | 全部核心逻辑：文档模型、绘制、关键帧、历史、交互、导出、AI |
+| §items.js§ | 物品列表、工具组、预设场景 |
+| §spritefont.js§ | Stardew SpriteFont 渲染器 |
+| §scripts/build-bundle.mjs§ | 离线 bundle 构建器 |
+| §app-bundle.js§ | 生成文件，浏览器实际运行它 |
+| §server.mjs§ | 静态文件服务器和 OpenAI 图片 API 本地代理 |
+| §start-overlay.cmd§ | Windows 启动入口 |
+| §asset-map.json§ | 原版资源坐标与物品 ID |
+| §qa/browser.mjs§ | 零依赖 CDP 驱动（启动 Edge/Chrome、截图、点按、文件注入） |
+| §qa/verify.mjs§ | 回归测试套件（页面基线 / 时间轴 / 自动关键帧 / 撤销重做 / 工程 / 图层 / 导出） |
+| §qa/screens.mjs§ | 生成参考截图 |
+| §vendor/fix-webm-duration.js§ | 修复 WebM 缺失时长元数据的第三方兼容库 |
+| §README.md§ | 面向最终使用者的说明 |
+
+## 6. 页面布局
+
+§§§text
+┌─────────────────────────────────────────┐
+│ 视频预览 / HUD 图层拖动与缩放           │
+├─────────────────────────────────────────┤
+│ 可上下拖动的分隔条                      │
+├─────────────────────────────────────────┤
+│ 标题栏（撤销 / 重做 / 透明画面）        │
+│ 自动保存提示条（有缓存时出现）          │
+│ 剪辑 | 画面 | 字幕 | 图层 | 工具栏 | AI | 导出 │
+│ 当前分页内容                            │
+└─────────────────────────────────────────┘
+§§§
+
+“剪辑”页第一行是横跨整行的时间轴，第二行左侧是视频导入与播放控制，右侧是画幅与背景。这样默认 400px 高度下时间轴不需要滚动就能看到。
+
+编辑器默认高度由 CSS 变量控制：
+
+§§§css
+--editor-height: 400px;
+§§§
+
+拖动 §#editorResizeHandle§ 会修改该变量。§.editor-panel§ 现在是 flex 纵向布局，§.editor-scroll§ 用 §flex: 1§ 自适应，不要再给 §.editor-scroll§ 写死 §height: calc(...)§。
+
+分页由 §setEditorTab(tab)§ 控制。所有分页对应：
+
+| 分页 | §data-editor-tab§ | 内容 |
+| --- | --- | --- |
+| 剪辑 | §video§ | 时间轴、视频、播放控制、画幅 |
+| 画面 | §scene§ | 时间、天气、日期、金币、体力 |
+| 字幕 | §caption§ | 信息卡标题和正文 |
+| 图层 | §layers§ | 显隐、位置、缩放、替换图片 |
+| 工具栏 | §assets§ | 工具组、当前物品 |
+| AI 生图 | §ai§ | OpenAI 图片生成 |
+| 导出 | §export§ | MP4 合成、取消、日志、工程保存、OBS 地址 |
+
+## 7. 数据模型（v2）
+
+### 当前状态
+
+§state§ 表示播放头当前的 HUD 状态，核心字段：
+
+§§§text
+layout（画幅：landscape / portrait，全局，不随关键帧变化）
+time / weather / season / day / stamina / money
+group / item / tag / caption
+clockVisible / staminaVisible / toolbarVisible / captionVisible
+clean
+§§§
+
+### 图层与图片
+
+两个与 §state§ 并列的“当前值”，它们会一起写进关键帧：
+
+§§§text
+componentLayout = { clock:{x,y,scale}, stamina:{...}, toolbar:{...}, caption:{...} }
+componentImageIds = { clock:id|null, stamina:id|null, toolbar:id|null, caption:id|null }
+§§§
+
+图片本体放在图片库里，关键帧只存 id：
+
+§§§text
+imageLibrary  id -> dataURL（会写进工程 JSON）
+imageObjects  id -> 已解码的 Image（仅内存）
+§§§
+
+§customComponentImages§ 是由 §componentImageIds§ 派生出来的缓存，绘制代码仍然读它。物品图标替换（§customItemData§ / §customItemImages§）按物品 key 全局保存，不随关键帧变化；物品本身是随关键帧切换的。
+
+### 关键帧
+
+§keyframes§ 是按 §at§ 排序的数组，每个关键帧是完整快照：
+
+§§§text
+at
+time / weather / season / day / stamina / money
+group / item / tag / caption
+clockVisible / staminaVisible / toolbarVisible / captionVisible
+layers = { clock:{x,y,scale}, ... }
+images = { clock:id|null, ... }
+§§§
+
+关键函数：
+
+- §captureLiveFrame()§：把当前 §state§ + §componentLayout§ + §componentImageIds§ 打包成一帧。
+- §normalizeFrame(frame, previous)§：加载和迁移时的字段校验与补全。
+- §stateAtTime(seconds)§：找到播放头之前的最近关键帧；“平滑”开启时插值时间、体力、金币、图层 x/y/scale，并对图片 id 做阶梯切换。
+- §applyTimelineTime(seconds)§：把结果写回 §state§、§componentLayout§、§componentImageIds§，刷新图片缓存。
+- §findFrameIndexAt(at)§：以 §KEYFRAME_EPSILON = 0.045§ 秒判定“播放头正好在关键帧上”。
+
+### 画幅与图层重映射
+
+§changeOrientation(mode)§ 不会简单丢弃布局：
+
+- 仍然是横屏/竖屏默认位置的图层（误差 0.5px、0.001 缩放以内）直接换成新画幅的默认位置。
+- 用户调过的图层按画布尺寸比例重映射（1920×1080 ↔ 1080×1920），缩放保持不变。
+- 所有关键帧里的 §layers§ 一起重映射，并记入历史。
+
+## 8. 编辑管线与自动关键帧
+
+所有“会改变文档”的编辑都走 §commitLiveState(label, options)§：
+
+1. 取当前播放头时间（§currentPlayheadTime()§）。
+2. §recordHistory(label)§ 记录编辑前快照（拖动中通过 §gesture§ 合并）。
+3. 播放头正好在关键帧上 → 更新该帧。
+4. 不在关键帧上且“自动关键帧”开启（默认）→ 在播放头插入新帧，并弹出节流后的提示。
+5. 不在关键帧上且“自动关键帧”关闭 → 写回当前选中的关键帧，不移动播放头。
+6. §touchDocument()§ 递增修订号、安排自动保存、刷新工程信息。
+
+拖动类交互（组件拖动、缩放、关键帧拖动、大小滑块）使用手势事务：
+
+§§§text
+beginGesture(label)  -> 记录手势开始时的快照与 docRevision
+... 多次 commitLiveState({ record:false }) ...
+endGesture()         -> 只有 docRevision 变了才压入一条历史
+§§§
+
+因此一次拖动只产生一步撤销。
+
+## 9. 时间轴实现
+
+DOM 结构：
+
+§§§text
+#timelineScroller        （横向滚动容器）
+  #timelineTrack         （宽度 = 缩放倍数 × 100%）
+    #timelineInner       （左右各 12px 内缩，所有百分比定位都以它为基准）
+      #timelineRuler     （刻度）
+      #timelineLane      （轨道，指针事件入口）
+        #keyframeMarkers （菱形按钮）
+      #timelinePlayhead  （播放头）
+§§§
+
+要点：
+
+- 缩放 §timelineZoom§ 范围 1–12 倍，按钮 `−` / `＋` / `适应`，Ctrl + 滚轮也能缩放。
+- 刻度步长由 §chooseTickStep()§ 按“至少 76px 一个标签”自动选择。
+- 关键帧按 §at / duration§ 的百分比定位，所以缩放、滚动都不用重算像素。
+- 拖动菱形调用 §snapTime()§：吸附阈值 8px，候选是 0、片尾、播放头和其他关键帧。
+- 点击/拖动空白处定位播放头；双击空白处新增关键帧。
+- 播放时 §scrollPlayheadIntoView()§ 自动跟随播放头。
+- §renderTimeline()§ 用 §timelineCache.rulerKey / markerKey§ 做增量刷新，播放时不会每帧重建 DOM。
+- 绿色小点（§.layer-key::after§）表示该帧相对上一帧改变了图层位置/缩放。
+
+## 10. 撤销 / 重做
+
+§history§ 保存的是“文档快照”：
+
+§§§text
+{ keyframes, images, itemImages, smooth, autoKey, snap, layoutMode, selectedKeyframeIndex, playhead }
+§§§
+
+- 上限 §HISTORY_LIMIT = 120§ 步。
+- §recordHistory(label)§ 在 450ms 内同名操作会合并，避免输入框每个字符一步。
+- §undo()/redo()§ 先压入当前文档，再 §restoreDocument(snapshot)§ 恢复；恢复会重新解码需要的图片。
+- 顶部按钮和 §Ctrl+Z§ / §Ctrl+Shift+Z§ / §Ctrl+Y§ 都可用；按钮 title 显示将要撤销的操作名。
+- 视频文件信息不在历史里：导入视频不是可撤销的文档修改。
+
+## 11. 工程文件 v2
+
+保存结构：
+
+§§§json
+{
+  "format": "stardew-vlog-hud",
+  "version": 2,
+  "savedAt": "2026-11-11T...",
+  "layout": "landscape",
+  "smooth": true,
+  "autoKey": true,
+  "snap": true,
+  "video": { "name": "...", "size": 109113, "duration": 2.37, "width": 1920, "height": 1080, "fps": 30, "importedAt": "..." },
+  "images": { "img-xxx": "data:image/png;base64,..." },
+  "itemImages": { "phone": "data:image/png;base64,..." },
+  "keyframes": [ { "at": 0, "...": "场景字段", "layers": { "clock": { "x": 1620, "y": 8, "scale": 1 } }, "images": { "clock": null } } ]
+}
+§§§
+
+### 迁移
+
+§migrateProject(raw)§：
+
+- 格式不是 §stardew-vlog-hud§ → 报“不是有效的星露谷 Vlog 工程文件”。
+- §version > 2§ → 报错提示更新编辑器。
+- §version 1§ → 自动迁移：§componentLayout§ 复制到每个关键帧的 §layers§；§customComponentImages§ 进入 §images§，id 为 §legacy-<组件名>§，并写到所有关键帧；补 §autoKey/snap/video§ 默认值。
+- 迁移和加载都会丢弃非 §data:image/§ 的图片值，避免坏工程。
+
+### 自动保存
+
+- localStorage key：§stardew-vlog-hud.autosave.v2§。
+- 每次文档变化后 1.2 秒防抖写入。
+- 超过约 4.5MB 或存储抛错时自动关闭，并在控制台提示；手动保存不受影响。
+- 打开页面时若发现缓存，顶部出现提示条，可“恢复”或“忽略”。
+
+### 视频提醒
+
+- §videoMeta§：当前真正导入的视频信息。
+- §expectedVideo§：工程里记录的视频信息。
+- 加载工程但没导入视频时，“剪辑”页显示工程对应视频的大小/时长/分辨率，并提供“重新导入匹配视频”。
+- 导入后名称或时长（0.08 秒容差）不一致时提示关键帧时间可能有偏移。
+- 保存工程时优先写当前视频信息；没有导入视频则保留工程里的参考信息。
+- 帧率通过 §requestVideoFrameCallback§ 在播放或导出时测量，属于“尽力而为”，未播放过的视频可能为 §null§。
+
+## 12. HUD 绘制
+
+主绘制入口：
+
+§render(shouldSync = true)§
+
+主要函数：
+
+- §drawClock()§
+- §drawStamina()§
+- §drawToolbar()§
+- §drawCaption()§
+- §drawDialogueBox()§
+- §drawTextureBox()§
+- §drawItem()§
+
+Canvas 固定逻辑尺寸：
+
+- 横屏：1920×1080
+- 竖屏：1080×1920
+
+素材坐标和游戏物品 ID 见 §asset-map.json§。
+
+### 选区对齐
+
+这是之前多次出问题的位置，修改时要特别小心。
+
+预览区域必须保持与 Canvas 相同宽高比。§.preview-stage§ 使用 §outline§ 做外框，不使用会缩小内容区的 §border§。
+
+选区计算必须使用 §componentBounds()§：
+
+| 模块 | 实际选区尺寸 |
+| --- | --- |
+| 时钟 | 包含下方金币栏，284×248 |
+| 体力 | 包含左侧数值，x 偏移 -80，宽 128，高 224 |
+| 工具栏 | 800×96 |
+| 信息卡 | 横屏 720×264；竖屏 880×264 |
+
+§updateSelectionBoxes()§ 现在带签名缓存：布局、选中项、舞台尺寸都没变时不会重建 DOM；强制刷新用 §updateSelectionBoxes(true)§。拖动时指针捕获在 §#selectionLayer§ 上，重建子元素不会丢事件。
+
+拖动或缩放后必须调用 §render()§，其中会继续调用 §updateSelectionBoxes()§。
+
+## 13. 视频与导出
+
+视频输入使用 §HTMLVideoElement§。预览时视频位于 Canvas 下方；导出时逐帧绘制到临时 Canvas：
+
+§§§text
+原视频画面 -> 按 cover 裁切 -> 绘制 HUD Canvas -> CanvasCaptureStream
+§§§
+
+录制优先级：
+
+1. §video/mp4;codecs=avc1.42E01E,mp4a.40.2§
+2. §video/mp4;codecs=avc1.42E01E§
+3. §video/mp4§
+4. VP9 WebM
+5. VP8 WebM
+6. WebM
+
+当前版 Edge 157 实测输出：
+
+- 横屏：H.264 + AAC，1920×1080
+- 竖屏：H.264 + AAC，1080×1920
+- 2.37 秒测试片导出的 MP4 时长约 2.5 秒
+
+新增能力：
+
+- “取消导出”按钮：停止录制、丢弃临时数据、恢复按钮状态；日志记录取消。
+- 导出日志（§#exportLog§）：开始时间、编码类型、音频来源、每 20% 进度、完成文件名与体积、错误原因。
+- 导出结束会回到片头并刷新预览。
+
+如果输出 WebM，会调用 §ysFixWebmDuration()§ 修复时长元数据。
+
+已知限制：
+
+- 导出是实时录制，速度约等于视频原时长。
+- 不包含剪辑、裁剪、变速、转场和多轨音频。
+- 浏览器不支持 MP4 MediaRecorder 时会回退 WebM。
+- Safari、Firefox 和低版本 Chromium 尚未完整测试。
+- §file://§ 下导出的下载文件名由浏览器决定，Edge 偶尔会追加编号。
+
+## 14. AI 图片生成
+
+前端入口：§generateAiImage()§
+本地代理：§POST /api/generate-image§
+
+请求由浏览器发给 §server.mjs§，再由服务端携带 API Key 调 OpenAI Images API：
+
+§§§text
+POST https://api.openai.com/v1/images/generations
+§§§
+
+默认模型：
+
+§§§text
+gpt-image-2.5-flare
+§§§
+
+2026-11-11 时的官方建议见：
+
+§§§text
+https://developers.openai.com/api/reference/resources/images/methods/generate
+§§§
+
+安全约定：
+
+- API Key 只保留在当前页面输入框和本地代理请求中。
+- 不写入工程 JSON。
+- 不写进源码。
+- 不要记录含 API Key 的请求体到日志。
+- 没有 Key 时仍可手动上传外部生成的 PNG。
+
+注意：目前只直接适配 OpenAI Images API，没有接 ComfyUI、Stable Diffusion WebUI 或其他供应商。若要接其他服务，建议在 §server.mjs§ 增加 provider 分支，不要让浏览器直接请求第三方 API。
+
+## 15. 自动化测试
+
+`qa/` 下是一套零依赖的浏览器回归测试，通过 Chrome DevTools Protocol 驱动本机 Edge/Chrome：
+
+§§§powershell
+cd D:\Agent\stardew-vlog-ui-exact
+node qa/verify.mjs              # 全部用例
+node qa/verify.mjs timeline     # 只跑分组
+node qa/verify.mjs --headed     # 打开可见窗口观察
+node qa/screens.mjs             # 重新生成 qa/shots 下的参考截图
+§§§
+
+分组：
+
+| 分组 | 覆盖内容 |
+| --- | --- |
+| §baseline§ | 页面无异常、控件数量、画幅、编辑器高度、拖动、选项卡 |
+| §timeline§ | 视频导入、标尺、拖动定位、关键帧新增与插值、菱形拖动、缩放、双击新增 |
+| §autokey§ | 自动关键帧开/关两种写入路径 |
+| §history§ | 撤销重做、快捷键、关键帧增删、图层拖动、至少保留一帧 |
+| §project§ | v2 保存、v1 迁移、图片库、文件加载、无视频提醒、自动保存与恢复 |
+| §layers§ | 图层关键帧、插值、图片随帧切换、工程往返、无效工程 |
+| §export§ | 取消导出、H.264 + AAC、横竖屏尺寸 |
+
+本轮基线：**80 项全部通过**（Edge 157 headless，`file://` 直接打开）。
+
+导出编码断言依赖 `ffprobe`：优先用环境变量 `DSH_FFPROBE`，其次 PATH 里的 `ffprobe`，最后回退到本机 `D:\AI产物\_tools\ffmpeg\ffprobe.exe`；都没有时会跳过编码断言。
+
+## 16. 当前测试基线（人工）
+
+最终 ZIP 解压后通过 §file://§ 实测：
+
+- 页面无 JavaScript 运行时错误
+- 天气选项 7 个
+- 工具组 6 个
+- 原版物品按钮 17 个
+- 4 个 HUD 选区
+- 编辑器默认高度 400px
+- 视频区域与 Canvas 尺寸一致
+- 模块拖动有效
+- 编辑器高度拖动有效
+- 分页切换有效
+- 时间轴拖动、菱形改时间、缩放、双击新增有效
+- 撤销 / 重做（按钮与快捷键）有效
+- 工程 v2 保存 / 加载 / v1 迁移 / 自动保存有效
+- 图层位置与图片随关键帧变化有效
+- MP4 导出有效，横屏 1920×1080、竖屏 1080×1920
+- MP4 同时含 H.264 视频和 AAC 音频
+- 导出可取消
+
+最终分发包：
+
+§§§text
+D:\Agent\stardew-vlog-ui-handoff-v2.zip
+§§§
+
+源码目录：
+
+§§§text
+D:\Agent\stardew-vlog-ui-exact
+§§§
+
+项目已经是 Git 仓库（本轮初始化），继续开发前建议先确认工作区干净。
+
+## 17. 常用调试检查
+
+### 页面能打开但没有 HUD
+
+检查：
+
+1. 是否加载了最新的 §app-bundle.js§。
+2. 修改源码后是否运行了 §npm run build§。
+3. 浏览器控制台是否有字体或图片加载错误。
+4. §window.vlogHUD.ready§ 是否为 §true§（测试脚本等的就是它）。
+5. §previewStage§ 与 §hudCanvas§ 是否具有相同纵横比。
+
+### 拖动框和素材不对齐
+
+重点检查：
+
+- 是否误给 §.preview-stage§ 加了占空间的 §border§。
+- §componentBounds()§ 是否仍包含金币栏和体力数值区。
+- §updateSelectionBoxes()§ 是否使用 §stageRect§ 的实际宽高。
+- Canvas 宽高比是否被 CSS 改变。
+
+### 关键帧行为异常
+
+检查：
+
+1. “自动关键帧”开关状态（§#autoKeyInput§）。
+2. 播放头是否正好落在某个关键帧上（0.045 秒容差）。
+3. §stateAtTime()§ 的关键帧排序是否仍然有序（拖动后会重新排序）。
+4. 图层插值只在“平滑”开启且两帧都有对应图层时生效。
+
+### MP4 导出失败
+
+检查：
+
+1. 是否使用新版 Edge 或 Chrome。
+2. §MediaRecorder.isTypeSupported("video/mp4")§ 的结果。
+3. Canvas 是否被本地图片污染。
+4. 是否重新运行过 bundle 构建。
+5. 原视频是否带有浏览器无法解码的编码。
+6. 导出日志 §#exportLog§ 里的编码和错误行。
+
+### AI 生图不可用
+
+检查：
+
+1. 是否通过 §start-overlay.cmd§ 从 HTTP 打开页面。
+2. 是否填写 API Key。
+3. 当前账号是否有目标模型权限。
+4. §server.mjs§ 是否能访问 §api.openai.com§。
+5. 浏览器控制台和终端是否有错误响应。
+
+### 自动保存不生效
+
+1. §file://§ 下 Chrome/Edge 的 localStorage 可用，但不同路径的 file:// 页面共享同一个存储域。
+2. 工程超过约 4.5MB 会自动关闭自动保存，控制台有提示。
+3. 浏览器隐私模式或禁用站点数据时不可用。
+
+## 18. 建议后续优先级
+
+### P0（本轮已完成）
+
+- ✅ 撤销 / 重做（含手势合并与快捷键）。
+- ✅ 工程 JSON 版本迁移（v1 → v2）。
+- ✅ 保存时记录视频文件名、时长、分辨率和帧率（帧率尽力而为）。
+- ✅ 导出取消按钮和编码状态日志。
+- ⬜ 大视频（数十分钟、4K）下的内存与长时间导出测试仍待做；建议用 10 分钟 1080p 片源跑一次导出，观察内存曲线和 MediaRecorder 稳定性。
+
+### P1
+
+- ⬜ 时间轴多轨道（场景 / 字幕 / 图层分轨显示与独立编辑）。
+- ⬜ 关键帧缓动曲线（目前只有开关式线性平滑）。
+- ⬜ 文本自动换行样式、字号和颜色配置。
+- ⬜ 内置裁剪功能，让上传图片直接裁成透明像素图标。
+- ⬜ ComfyUI 等本地 AI 后端适配。
+- ⬜ 导出分辨率选项（1080p/720p）与码率设置。
+
+### P2
+
+- ⬜ 使用 WebCodecs + MP4 muxer 或 FFmpeg.wasm 实现非实时、帧精确导出。
+- ⬜ 自动化测试接入 CI（目前是本地 CDP 脚本）。
+- ⬜ 移动端触控布局。
+- ⬜ 工程内嵌原视频的“打包导出”模式（体积大，需权衡）。
+
+## 19. 素材使用边界
+
+项目里包含从用户本机 Steam 游戏文件提取的原版图片和字体。它们不是项目作者原创的公开素材。
+
+- 保留在本机作为个人剪辑模板使用问题较小。
+- 如果准备商业化、投流、转发素材包或公开展示原版美术资源，需要另行确认授权。
+- 分发代码时，建议把原版素材替换为可公开授权的资源，或在打包时排除。
