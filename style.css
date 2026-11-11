@@ -1248,6 +1248,15 @@ body.portrait .preview-stage {
   user-select: none;
 }
 
+.timeline-dock.no-video .timeline-track {
+  cursor: not-allowed;
+}
+
+.timeline-dock.no-video .timeline-ruler,
+.timeline-dock.no-video .timeline-lane {
+  opacity: 0.55;
+}
+
 .timeline-inner {
   position: relative;
   height: 100%;
@@ -1259,6 +1268,7 @@ body.portrait .preview-stage {
   height: 20px;
   border-bottom: 1px solid var(--line);
   background: #19110a;
+  cursor: ew-resize;
 }
 
 .timeline-tick {
@@ -1356,6 +1366,26 @@ body.portrait .preview-stage {
   display: none;
 }
 
+.frame-label {
+  position: absolute;
+  top: 2px;
+  left: clamp(30px, var(--pos, 0%), calc(100% - 30px));
+  z-index: 5;
+  padding: 1px 5px;
+  border: 1px solid var(--brass);
+  background: #1d130c;
+  color: var(--brass-bright);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.frame-label[hidden] {
+  display: none;
+}
+
 .keyframe-markers {
   position: absolute;
   inset: 0;
@@ -1386,14 +1416,31 @@ body.portrait .preview-stage {
 }
 
 .keyframe-marker.active {
-  background: var(--ember);
-  box-shadow: 0 0 0 1px #120d08, 0 0 0 3px rgba(246, 232, 200, 0.4);
+  background: #fff0c0;
+  box-shadow: 0 0 0 1px #120d08, 0 0 0 3px rgba(224, 122, 63, 0.55);
   transform: scale(1.15);
 }
 
 .keyframe-marker.dragging {
   cursor: grabbing;
   background: #ffb066;
+}
+
+@keyframes kf-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    background: #fff3c4;
+    transform: scale(1.75);
+  }
+  100% {
+    transform: scale(1.2);
+  }
+}
+
+.keyframe-marker.just-added {
+  animation: kf-pop 520ms var(--ease-steps);
 }
 
 .keyframe-marker.layer-key::after {

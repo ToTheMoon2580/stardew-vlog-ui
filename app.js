@@ -86,6 +86,7 @@ const ui = {
   back: $("#backButton"),
   forward: $("#forwardButton"),
   addKeyframe: $("#addKeyframeButton"),
+  addKeyframeDock: $("#addKeyframeDockButton"),
   deleteKeyframe: $("#deleteKeyframeButton"),
   timelineScroller: $("#timelineScroller"),
   track: $("#timelineTrack"),
@@ -151,6 +152,7 @@ const ui = {
   frameSummaryState: $("#frameSummaryState"),
   frameSummaryFrame: $("#frameSummaryFrame"),
   timelineEmpty: $("#timelineEmpty"),
+  activeFrameLabel: $("#activeFrameLabel"),
   playheadBubble: $("#playheadBubble"),
   resetLayout: $("#resetLayoutButton"),
   clearImage: $("#clearImageButton"),
@@ -269,7 +271,7 @@ function timelineDuration() {
 }
 
 function currentPlayheadTime() {
-  if (ui.video.src && Number.isFinite(ui.video.currentTime)) {
+  if (ui.video.src && !ui.video.paused && Number.isFinite(ui.video.currentTime)) {
     return clamp(ui.video.currentTime, 0, timelineDuration());
   }
   return clamp(playhead, 0, timelineDuration());
@@ -724,6 +726,10 @@ async function restoreDocument(snapshot) {
 }
 
 function undo() {
+  if (isExporting) {
+    showToast("导出中不能撤销，请先取消导出");
+    return;
+  }
   const entry = history.undo.pop();
   if (!entry) {
     showToast("没有可撤销的操作");
@@ -738,6 +744,10 @@ function undo() {
 }
 
 function redo() {
+  if (isExporting) {
+    showToast("导出中不能重做，请先取消导出");
+    return;
+  }
   const entry = history.redo.pop();
   if (!entry) {
     showToast("没有可重做的操作");
@@ -769,6 +779,14 @@ function notifyAutoKey(at) {
   showToast("已在 " + formatTimelineTime(at) + " 自动记录关键帧");
 }
 
+function notifyStoredKeyframe(at) {
+  const now = performance.now();
+  if (now - autoKeyNotice.at < 1200 && Math.abs(at - autoKeyNotice.time) < 0.4) return;
+  autoKeyNotice.at = now;
+  autoKeyNotice.time = at;
+  showToast("自动关键帧已关闭，修改写入 " + formatTimelineTime(at) + " 的关键帧");
+}
+
 function commitLiveState(label, options = {}) {
   const { record = true, renderNow = true } = options;
   const at = clamp(roundTime(currentPlayheadTime()), 0, timelineDuration());
@@ -783,19 +801,28 @@ function commitLiveState(label, options = {}) {
   } else {
     const target = selectedKeyframe() || keyframes[0];
     Object.assign(target, captureLiveFrame(), { at: target.at });
+    notifyStoredKeyframe(target.at);
   }
   touchDocument();
   if (renderNow) render();
 }
 
 function addKeyframeAtPlayhead() {
+  if (!ui.video.src) {
+    showToast("请先导入视频，再在时间轴上打关键帧");
+    return;
+  }
+  if (!videoDuration()) {
+    showToast("视频还在读取中，稍等一下再添加");
+    return;
+  }
   const at = clamp(roundTime(currentPlayheadTime()), 0, timelineDuration());
   recordHistory("添加关键帧");
   const existing = findFrameIndexAt(at);
   if (existing >= 0) {
     Object.assign(keyframes[existing], captureLiveFrame(), { at: keyframes[existing].at });
     selectedKeyframeIndex = existing;
-    showToast("已更新 " + formatTimelineTime(at) + " 的关键帧");
+    showToast("该时间已有关键帧，已更新 " + formatTimelineTime(at));
   } else {
     insertFrameAt(at, captureLiveFrame());
     showToast("已添加关键帧 " + formatTimelineTime(at));
@@ -804,6 +831,16 @@ function addKeyframeAtPlayhead() {
   applyTimelineTime(at);
   updateTimelineMeta(at);
   render();
+  flashSelectedKeyframe();
+}
+
+function flashSelectedKeyframe() {
+  requestAnimationFrame(() => {
+    const marker = ui.markers?.querySelector('.keyframe-marker[data-index="' + selectedKeyframeIndex + '"]');
+    if (!marker) return;
+    marker.classList.add("just-added");
+    setTimeout(() => marker.classList.remove("just-added"), 620);
+  });
 }
 
 function deleteSelectedKeyframe() {
@@ -925,7 +962,24 @@ function renderTimeline() {
     }).join("");
   }
   updatePlayheadMarker();
+  updateActiveFrameLabel();
   if (ui.timelineEmpty) ui.timelineEmpty.hidden = Boolean(ui.video.src) || keyframes.length > 1;
+}
+
+function updateActiveFrameLabel() {
+  const label = ui.activeFrameLabel;
+  if (!label) return;
+  const frame = keyframes[selectedKeyframeIndex] || keyframes[0];
+  if (!frame) {
+    label.hidden = true;
+    return;
+  }
+  const duration = timelineDuration();
+  const ratio = duration > 0 ? clamp(frame.at / duration, 0, 1) : 0;
+  label.hidden = false;
+  label.style.setProperty("--pos", (ratio * 100).toFixed(4) + "%");
+  label.textContent = formatTimelineTime(frame.at);
+  label.title = "当前关键帧 " + formatTimelineTime(frame.at);
 }
 
 function updateTimelineMeta(seconds) {
@@ -933,7 +987,9 @@ function updateTimelineMeta(seconds) {
   ui.currentTime.textContent = formatTimelineTime(playhead);
   ui.duration.textContent = formatTimelineTime(videoDuration());
   const onFrame = findFrameIndexAt(playhead) >= 0;
-  ui.keyframeCount.textContent = keyframes.length + " 个关键帧" + (onFrame ? " · 当前帧" : "");
+  ui.keyframeCount.textContent = keyframes.length === 1 && !ui.video.src
+    ? "初始场景 · 导入视频后可打关键帧"
+    : keyframes.length + " 个关键帧" + (onFrame ? " · 当前帧" : "");
   ui.exportProgress.max = Math.max(0.01, videoDuration());
   ui.exportProgress.value = Math.min(playhead, Math.max(0.01, videoDuration()));
   renderTimeline();
@@ -951,9 +1007,19 @@ function syncVideoClip() {
     ui.exportOpen.disabled = true;
     ui.exportOpen.title = "请先导入视频后再导出";
     ui.exportVideo.disabled = true;
+    ui.addKeyframe.disabled = true;
+    ui.addKeyframe.title = "请先导入视频";
+    ui.addKeyframeDock.disabled = true;
+    ui.addKeyframeDock.title = "请先导入视频";
+    ui.dock.classList.add("no-video");
     if (ui.exportSummary) ui.exportSummary.textContent = "尚未导入视频 · 先导入 MP4 / MOV / WebM";
     return;
   }
+  ui.addKeyframe.disabled = false;
+  ui.addKeyframe.title = "在当前时间添加关键帧 (K)";
+  ui.addKeyframeDock.disabled = false;
+  ui.addKeyframeDock.title = "在当前时间添加关键帧 (K)";
+  ui.dock.classList.remove("no-video");
   const total = timelineDuration();
   const width = total > 0 ? clamp(duration / total, 0, 1) * 100 : 100;
   ui.videoClip.style.width = width.toFixed(3) + "%";
@@ -1056,7 +1122,13 @@ function updateTimelineDrag(event) {
   }
   const at = roundTime(snapTime(timeFromClientX(event.clientX), timelineDrag.frame.at));
   if (Math.abs(at - timelineDrag.frame.at) < 0.0005) return;
-  timelineDrag.frame.at = clamp(at, 0, timelineDuration());
+  // 不允许两个关键帧落在同一时间点：贴到邻居旁边停住
+  const neighbor = keyframes.find((frame) => frame !== timelineDrag.frame && Math.abs(frame.at - at) <= KEYFRAME_EPSILON);
+  if (neighbor) timelineDrag.collidedAt = neighbor.at;
+  const target = neighbor
+    ? roundTime(neighbor.at + (at >= neighbor.at ? KEYFRAME_EPSILON + 0.005 : -KEYFRAME_EPSILON - 0.005))
+    : at;
+  timelineDrag.frame.at = clamp(target, 0, timelineDuration());
   timelineDrag.moved = true;
   showTimelineBubble(timelineDrag.frame.at, "◆ " + formatTimelineTime(timelineDrag.frame.at));
   sortKeyframes();
@@ -1081,7 +1153,9 @@ function endTimelineDrag(event) {
     endGesture();
     if (drag.moved) {
       seekTo(drag.frame.at);
-      showToast("关键帧已移动到 " + formatTimelineTime(drag.frame.at));
+      showToast(drag.collidedAt != null
+        ? "该时间已有关键帧，已停在 " + formatTimelineTime(drag.frame.at)
+        : "关键帧已移动到 " + formatTimelineTime(drag.frame.at));
     } else {
       seekTo(drag.frame.at);
     }
@@ -1854,8 +1928,13 @@ async function playVideo() {
   }
   if (ui.video.paused) {
     if (ui.video.ended || ui.video.currentTime >= videoDuration() - 0.02) ui.video.currentTime = 0;
-    await ui.video.play();
-    probeFrameRate();
+    try {
+      await ui.video.play();
+      probeFrameRate();
+    } catch (error) {
+      // 快速连按空格时浏览器会以 AbortError 拒绝上一次 play()，忽略即可
+      if (error?.name !== "AbortError") showToast("无法播放这个视频：" + error.message);
+    }
   } else {
     ui.video.pause();
   }
@@ -1959,6 +2038,7 @@ function migrateProject(raw) {
 
 async function applyProjectObject(rawProject, options = {}) {
   const project = migrateProject(rawProject);
+  if (!ui.video.paused) ui.video.pause();
   timelineInitialized = true;
   state.layout = project.layout;
   ui.smooth.checked = project.smooth;
@@ -2005,6 +2085,9 @@ async function applyProjectObject(rawProject, options = {}) {
     }
   }
   updateVideoReminder();
+  history.undo.length = 0;
+  history.redo.length = 0;
+  history.lastLabel = "";
   docRevision++;
   scheduleAutosave();
   render();
@@ -2050,7 +2133,7 @@ function updateProjectMeta() {
   if (ui.topbarMeta) {
     ui.topbarMeta.textContent = reference
       ? reference.name + " · " + formatTimelineTime(reference.duration) + (videoMeta ? "" : " · 待导入") + " · " + keyframes.length + " 个关键帧"
-      : "未导入视频 · " + keyframes.length + " 个关键帧";
+      : "未导入视频 · 初始场景";
   }
 }
 
@@ -2557,6 +2640,18 @@ function bindKeyboard() {
   document.addEventListener("keydown", (event) => {
     const typing = event.target.matches("input, textarea, select") || event.target.isContentEditable;
     const meta = event.ctrlKey || event.metaKey;
+    if (meta && event.key.toLowerCase() === "s") {
+      // 在输入框里按下 Ctrl+S 也要保存工程，而不是弹出浏览器的“保存网页”
+      event.preventDefault();
+      saveProjectFile();
+      return;
+    }
+    if (isExporting && event.key !== "Escape") {
+      // 导出是实时录制，期间不允许播放/拖动/编辑打断画面
+      if (event.code === "Space" || event.key === "ArrowLeft" || event.key === "ArrowRight") event.preventDefault();
+      if (event.key.toLowerCase() === "k" || event.key === "Delete" || event.key === "Backspace") event.preventDefault();
+      return;
+    }
     if (meta && !typing) {
       const key = event.key.toLowerCase();
       if (key === "z") {
@@ -2747,6 +2842,7 @@ function bindControls() {
   ui.back.addEventListener("click", () => seekRelative(-0.1));
   ui.forward.addEventListener("click", () => seekRelative(0.1));
   ui.addKeyframe.addEventListener("click", addKeyframeAtPlayhead);
+  ui.addKeyframeDock.addEventListener("click", addKeyframeAtPlayhead);
   ui.deleteKeyframe.addEventListener("click", deleteSelectedKeyframe);
   ui.exportVideo.addEventListener("click", exportVideo);
   ui.cancelExport.addEventListener("click", cancelExport);

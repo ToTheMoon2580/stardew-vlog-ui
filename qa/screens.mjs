@@ -10,7 +10,7 @@ import { Browser } from "./browser.mjs";
 const root = path.resolve(import.meta.dirname, "..");
 const outDir = path.join(root, "qa", "shots");
 const pageUrl = pathToFileURL(path.join(root, "overlay.html")).href;
-const testVideo = path.join(root, "previews", "video-editor-demo.mp4");
+const testVideo = path.join(root, "previews", "vlog-sample.mp4");
 const small = process.argv.includes("--small");
 
 const viewport = small ? { width: 1180, height: 760 } : { width: 1500, height: 980 };
@@ -36,11 +36,11 @@ try {
   await page.click('[data-inspector-tab="scene"]');
   await page.setFileInput("#videoInput", [testVideo]);
   await page.waitFor("document.querySelector('#videoPreview').duration > 0");
-  await page.evaluate("window.vlogHUD.seek(0.3)");
+  await page.evaluate("window.vlogHUD.seek(0.8)");
   await page.evaluate(`window.vlogHUD.set({ time: "09:10", weather: "blossom", stamina: 86, tag: "出门" })`);
-  await page.evaluate("window.vlogHUD.seek(1.9)");
+  await page.evaluate("window.vlogHUD.seek(4.5)");
   await page.evaluate(`window.vlogHUD.set({ time: "18:30", weather: "rain", stamina: 42, tag: "收工" })`);
-  await page.evaluate("window.vlogHUD.seek(0.75)");
+  await page.evaluate("window.vlogHUD.seek(1.6)");
   await wait(250);
   await page.screenshot(path.join(outDir, prefix + "editor-timeline.png"));
 

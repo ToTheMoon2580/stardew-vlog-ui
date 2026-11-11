@@ -100,6 +100,56 @@ async function openExportDialog() {
   await page.waitFor("document.querySelector('#exportDialog').open === true", { label: "导出弹窗打开" });
 }
 
+async function setInput(selector, value) {
+  await page.evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    el.value = ${JSON.stringify(String(value))};
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+}
+
+async function canvasAlpha(x, y, w = 1, h = 1) {
+  return page.evaluate(`(() => {
+    const canvas = document.querySelector("#hudCanvas");
+    const data = canvas.getContext("2d").getImageData(${x}, ${y}, ${w}, ${h}).data;
+    let n = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 8) n++;
+    return n;
+  })()`);
+}
+
+async function canvasHash(x, y, w = 1, h = 1) {
+  return page.evaluate(`(() => {
+    const canvas = document.querySelector("#hudCanvas");
+    const data = canvas.getContext("2d").getImageData(${x}, ${y}, ${w}, ${h}).data;
+    let hash = 0;
+    for (let i = 0; i < data.length; i += 7) hash = (hash * 31 + data[i]) % 2147483647;
+    return hash;
+  })()`);
+}
+
+async function makePngFile(filePath, color) {
+  const { writeFile } = await import("node:fs/promises");
+  const canvasPng = await page.evaluate(`(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 32; canvas.height = 32;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = ${JSON.stringify(color)};
+    ctx.fillRect(0, 0, 32, 32);
+    return canvas.toDataURL("image/png");
+  })()`);
+  await writeFile(filePath, Buffer.from(canvasPng.split(",")[1], "base64"));
+  return filePath;
+}
+
+async function clearDownloads() {
+  if (!page.downloadDir) return;
+  await rm(page.downloadDir, { recursive: true, force: true });
+  await mkdir(page.downloadDir, { recursive: true });
+}
+
 const suites = {};
 
 suites.baseline = async () => {
@@ -394,6 +444,7 @@ suites.autokey = async () => {
 
 suites.history = async () => {
   await reload();
+  await importVideo();
   const before = await page.evaluate("window.vlogHUD.state.day");
   await page.evaluate(`(() => {
     const input = document.querySelector("#dayInput");
@@ -449,6 +500,30 @@ suites.history = async () => {
   await page.evaluate("window.vlogHUD.undo()");
   await page.waitFor(`Math.abs(window.vlogHUD.layers.caption.x - ${beforeDrag.x}) < 1`, { label: "撤销图层拖动" });
   check("撤销图层拖动", Math.abs((await page.evaluate("window.vlogHUD.layers.caption")).x - beforeDrag.x) < 1);
+
+  // 画幅切换可撤销
+  await page.click('[data-layout="portrait"]');
+  await waitForIdle();
+  check("切换到竖屏", (await page.evaluate("document.querySelector('#hudCanvas').width")) === 1080);
+  await page.evaluate("window.vlogHUD.undo()");
+  await waitForIdle();
+  check("撤销画幅切换", (await page.evaluate("document.querySelector('#hudCanvas').width")) === 1920,
+    "canvas=" + (await page.evaluate("document.querySelector('#hudCanvas').width")));
+
+  // 替换图片可撤销
+  const beforeImage = await page.evaluate("window.vlogHUD.components.imageId('clock')");
+  await page.evaluate(`(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 16; canvas.height = 16;
+    canvas.getContext("2d").fillRect(0, 0, 16, 16);
+    return window.vlogHUD.components.setImage("clock", canvas.toDataURL("image/png"));
+  })()`);
+  await waitForIdle();
+  const withImage = await page.evaluate("window.vlogHUD.components.imageId('clock')");
+  await page.evaluate("window.vlogHUD.undo()");
+  await waitForIdle();
+  check("撤销替换图片", Boolean(withImage) && (await page.evaluate("window.vlogHUD.components.imageId('clock')")) === beforeImage,
+    String(beforeImage) + " → " + String(withImage) + " → " + String(await page.evaluate("window.vlogHUD.components.imageId('clock')")));
 
   await page.evaluate(`(() => {
     while (window.vlogHUD.keyframes.length > 1) window.vlogHUD.deleteKeyframe();
@@ -674,6 +749,21 @@ suites.export = async () => {
 
   await page.click("#exportVideoButton");
   await page.waitFor("window.vlogHUD.exporting === true", { label: "导出开始" });
+
+  // 导出是实时录制：期间空格/方向键/K 不应打断
+  const frameCountDuring = await page.evaluate("window.vlogHUD.keyframes.length");
+  await page.pressKey("Space");
+  await page.pressKey("k");
+  await page.pressKey("ArrowRight");
+  await waitForIdle();
+  const during = await page.evaluate(`(() => ({
+    paused: document.querySelector("#videoPreview").paused,
+    frames: window.vlogHUD.keyframes.length,
+    exporting: window.vlogHUD.exporting
+  }))()`);
+  check("导出中忽略空格暂停", during.paused === false && during.exporting === true);
+  check("导出中忽略加帧快捷键", during.frames === frameCountDuring);
+
   await page.click("#cancelExportButton");
   await page.waitFor("window.vlogHUD.exporting === false", { label: "导出取消" });
   const cancelled = await page.evaluate(`(() => ({
@@ -754,6 +844,413 @@ suites.compact = async () => {
   await page.send("Emulation.clearDeviceMetricsOverride");
 };
 
+suites.controls = async () => {
+  await reload();
+  const clockRegion = [1650, 30, 240, 200];
+  const alphaOf = (region) => canvasAlpha(region[0], region[1], region[2], region[3]);
+
+  // 场景参数
+  await setInput("#weatherInput", "storm");
+  check("天气切换写入状态", (await page.evaluate("window.vlogHUD.state.weather")) === "storm");
+  await setInput("#timeInput", "21:45");
+  check("时间输入写入状态", (await page.evaluate("window.vlogHUD.state.time")) === "21:45");
+  await setInput("#seasonInput", "winter");
+  check("季节切换写入状态", (await page.evaluate("window.vlogHUD.state.season")) === "winter");
+  await setInput("#dayInput", "26");
+  check("日期输入写入状态", (await page.evaluate("window.vlogHUD.state.day")) === 26);
+  await setInput("#moneyInput", "4321");
+  check("金币输入写入状态", (await page.evaluate("window.vlogHUD.state.money")) === 4321);
+  await setInput("#dayInput", "99");
+  check("日期越界被夹住", (await page.evaluate("window.vlogHUD.state.day")) === 28,
+    String(await page.evaluate("window.vlogHUD.state.day")));
+
+  const clockBefore = await alphaOf(clockRegion);
+  await page.evaluate(`(() => {
+    const input = document.querySelector("#clockVisibleInput");
+    input.checked = false;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  const clockHidden = await alphaOf(clockRegion);
+  check("关闭时钟后画布对应区域清空", clockHidden < clockBefore * 0.2, clockBefore + " → " + clockHidden);
+  await page.evaluate(`(() => {
+    const input = document.querySelector("#clockVisibleInput");
+    input.checked = true;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+
+  // 体力滑杆（轨道本身不透明，用像素指纹判断颜色变化）
+  const staminaBefore = await canvasHash(1860, 850, 60, 210);
+  await setInput("#staminaInput", "15");
+  const staminaAfter = await canvasHash(1860, 850, 60, 210);
+  check("体力滑杆改变画面", staminaBefore !== staminaAfter, staminaBefore + " → " + staminaAfter);
+  check("体力数值写入状态", (await page.evaluate("window.vlogHUD.state.stamina")) === 15);
+
+  // 字幕
+  const captionBefore = await canvasHash(60, 700, 700, 250);
+  await setInput("#captionInput", "今天也认真吃了早饭");
+  const captionAfter = await canvasHash(60, 700, 700, 250);
+  check("字幕文字改变画面", captionBefore !== captionAfter, captionBefore + " → " + captionAfter);
+  await page.evaluate(`(() => {
+    const input = document.querySelector("#captionVisibleInput");
+    input.checked = false;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  check("关闭信息卡后画布区域清空", (await canvasAlpha(60, 700, 700, 250)) < 50);
+
+  // 工具栏与道具
+  await setInput("#groupInput", "food");
+  check("工具组切换写入状态", (await page.evaluate("window.vlogHUD.state.group")) === "food");
+  await page.click('.item-choice[data-item="pizza"]');
+  await waitForIdle();
+  check("点击道具切换当前物品", (await page.evaluate("window.vlogHUD.state.item")) === "pizza");
+  check("当前物品文案同步", (await page.evaluate("document.querySelector('#selectedItemName').textContent")) === "披萨");
+
+  // 场景预设
+  await page.click('.preset-chip[data-preset="2"]');
+  await waitForIdle();
+  const preset = await page.evaluate("window.vlogHUD.state");
+  check("场景预设套用完整状态", preset.weather === "rain" && preset.item === "book" && preset.time === "13:30",
+    `${preset.weather} / ${preset.item} / ${preset.time}`);
+
+  // 画幅
+  await page.click('[data-layout="portrait"]');
+  await waitForIdle();
+  check("切换竖屏画布尺寸", (await page.evaluate("document.querySelector('#hudCanvas').width")) === 1080);
+  await page.click('[data-layout="landscape"]');
+  await waitForIdle();
+
+  // 背景照片
+  await makePngFile(path.join(tmpDir, "photo.png"), "#7a4b2a");
+  await page.setFileInput("#photoInput", [path.join(tmpDir, "photo.png")]);
+  await page.waitFor("document.querySelector('#sceneBackground').classList.contains('has-photo')", { label: "背景照片生效" });
+  check("导入背景照片", true);
+  await page.click("#clearPhotoButton");
+  await waitForIdle();
+  check("恢复示例背景", (await page.evaluate("document.querySelector('#sceneBackground').classList.contains('has-photo')")) === false);
+
+  // AI 表单（file:// 下应给出明确提示，而不是崩溃）
+  await page.click('[data-inspector-tab="ai"]');
+  await setInput("#aiApiKeyInput", "sk-test");
+  await page.click("#generateImageButton");
+  await page.waitFor("document.querySelector('#aiStatus').textContent.includes('start-overlay')", { label: "AI 提示" });
+  check("AI 在 file:// 下给出手册提示", true);
+  check("AI 表单未导致页面异常", page.pageErrors.length === 0, page.pageErrors.join(" | "));
+
+  // 撤销回到初始
+  for (let i = 0; i < 30; i++) await page.evaluate("window.vlogHUD.undo()");
+  await waitForIdle();
+  check("连续撤销不报错", page.pageErrors.length === 0);
+};
+
+suites.timelineEdge = async () => {
+  await reload();
+  check("无视频时添加关键帧按钮禁用", (await page.evaluate("document.querySelector('#addKeyframeButton').disabled")) === true);
+  await page.click("#addKeyframeButton").catch(() => {});
+  check("无视频时不会新增关键帧", (await page.evaluate("window.vlogHUD.keyframes.length")) === 1);
+
+  await importVideo();
+  check("导入后添加关键帧按钮可用", (await page.evaluate("document.querySelector('#addKeyframeButton').disabled")) === false);
+
+  // 点标尺定位后添加
+  const ruler = await page.evaluate(`(() => {
+    const r = document.querySelector("#timelineTrack").getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  })()`);
+  const clickX = ruler.left + ruler.width * 0.62;
+  const clickY = ruler.top + 10;
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: clickX, y: clickY, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: clickX, y: clickY, button: "left", clickCount: 1 });
+  await waitForIdle();
+  const seeked = await page.evaluate("document.querySelector('#videoPreview').currentTime");
+  await page.click("#addKeyframeButton");
+  await waitForIdle();
+  const frames = await page.evaluate("window.vlogHUD.keyframes");
+  const added = frames.find((frame) => Math.abs(frame.at - seeked) < 0.05);
+  check("点标尺定位后添加落在播放头", Boolean(added), "播放头 " + seeked.toFixed(2) + " / 帧 " + frames.map((f) => f.at.toFixed(2)).join(","));
+
+  // 同一位置再点一次：更新而不是重复
+  const beforeCount = frames.length;
+  await page.click("#addKeyframeButton");
+  await waitForIdle();
+  const afterCount = await page.evaluate("window.vlogHUD.keyframes.length");
+  const toast = await page.evaluate("document.querySelector('#toast').textContent");
+  check("同一时间重复添加只更新", afterCount === beforeCount && /已更新/.test(toast), toast);
+
+  // 时间轴工具条里的加帧按钮同样按播放头落帧
+  await page.evaluate("window.vlogHUD.seek(0.9)");
+  await page.click("#addKeyframeDockButton");
+  await waitForIdle();
+  const dockAdded = await page.evaluate("window.vlogHUD.keyframes.some((f) => Math.abs(f.at - 0.9) < 0.06)");
+  check("时间轴工具条也能加关键帧", dockAdded === true);
+
+  // 拖动关键帧撞到另一个帧时不允许重叠
+  await page.evaluate("window.vlogHUD.seek(2.0)");
+  await page.evaluate(`window.vlogHUD.set({ time: "22:00" })`);
+  await waitForIdle();
+  const positions = await page.evaluate("window.vlogHUD.keyframes.map((f) => f.at)");
+  const marker = await page.evaluate(`(() => {
+    const list = [...document.querySelectorAll(".keyframe-marker")];
+    const last = list[list.length - 1].getBoundingClientRect();
+    return { x: last.left + last.width / 2, y: last.top + last.height / 2 };
+  })()`);
+  const inner = await page.evaluate(`(() => {
+    const r = document.querySelector("#timelineInner").getBoundingClientRect();
+    return { left: r.left, width: r.width };
+  })()`);
+  const targetX = inner.left + inner.width * (positions[positions.length - 2] / 2.37);
+  await dragOnPage({ x: marker.x, y: marker.y }, { x: targetX, y: marker.y }, 8);
+  const afterDragTimes = await page.evaluate("window.vlogHUD.keyframes.map((f) => Number(f.at.toFixed(3)))");
+  const uniqueTimes = new Set(afterDragTimes.map((t) => t.toFixed(2)));
+  check("拖动不允许两个帧重叠", uniqueTimes.size === afterDragTimes.length,
+    afterDragTimes.join(","));
+
+  // 删除
+  await page.evaluate("window.vlogHUD.seek(2.0)");
+  await page.click("#deleteKeyframeButton");
+  await waitForIdle();
+  check("删除关键帧生效", (await page.evaluate("window.vlogHUD.keyframes.length")) < afterDragTimes.length);
+
+  // 放大 + 横向滚动后点击定位仍准确
+  await page.click("#timelineZoomIn");
+  await page.click("#timelineZoomIn");
+  await page.evaluate("document.querySelector('#timelineScroller').scrollLeft = 320");
+  await waitForIdle();
+  const scroller = await page.evaluate(`(() => {
+    const r = document.querySelector("#timelineScroller").getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  })()`);
+  const zx = scroller.left + scroller.width * 0.5;
+  const zy = scroller.top + scroller.height - 12;
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: zx, y: zy, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: zx, y: zy, button: "left", clickCount: 1 });
+  await waitForIdle();
+  const zoomSeek = await page.evaluate("document.querySelector('#videoPreview').currentTime");
+  check("放大滚动后定位仍然准确", zoomSeek > 0.3 && zoomSeek < 2.3, zoomSeek.toFixed(2));
+  await page.click("#timelineFitButton");
+};
+
+suites.shortcuts = async () => {
+  await reload();
+  await importVideo();
+  await page.pressKey("Space");
+  await page.waitFor("document.querySelector('#videoPreview').paused === false", { label: "空格播放" });
+  check("空格开始播放", true);
+  await page.pressKey("Space");
+  await page.waitFor("document.querySelector('#videoPreview').paused === true", { label: "空格暂停" });
+  check("空格暂停播放", true);
+
+  await page.evaluate("window.vlogHUD.seek(0.5)");
+  await page.pressKey("ArrowRight");
+  await waitForIdle();
+  check("方向键前进 0.1 秒", Math.abs((await page.evaluate("document.querySelector('#videoPreview').currentTime")) - 0.6) < 0.05,
+    (await page.evaluate("document.querySelector('#videoPreview').currentTime")).toFixed(2));
+
+  await page.pressKey("k");
+  await waitForIdle();
+  check("K 添加关键帧", (await page.evaluate("window.vlogHUD.keyframes.length")) === 2);
+
+  await page.pressKey("[");
+  await waitForIdle();
+  check("[ 跳到上一个关键帧", (await page.evaluate("document.querySelector('#videoPreview').currentTime")) < 0.2);
+
+  await page.pressKey("Delete");
+  await waitForIdle();
+  check("Delete 删除关键帧", (await page.evaluate("window.vlogHUD.keyframes.length")) === 1);
+
+  await page.pressKey("z", { modifiers: 2 });
+  await page.waitFor("window.vlogHUD.keyframes.length === 2", { label: "撤销删除" });
+  check("Ctrl+Z 撤销删除", true);
+
+  await page.evaluate("window.vlogHUD.seek(0.8)");
+  await page.evaluate(`window.vlogHUD.set({ money: 777 })`);
+  await waitForIdle();
+  await page.pressKey("z", { modifiers: 2 | 8 });
+  await waitForIdle();
+  check("快捷键不报错", page.pageErrors.length === 0, page.pageErrors.join(" | "));
+
+  await page.pressKey("e");
+  await waitForIdle();
+  check("E 进入透明画面", (await page.evaluate("document.body.classList.contains('clean')")) === true);
+  await page.pressKey("e");
+  await waitForIdle();
+  check("E 退出透明画面", (await page.evaluate("document.body.classList.contains('clean')")) === false);
+
+  // Ctrl+S 触发保存下载
+  await page.pressKey("s", { modifiers: 2 });
+  const saved = await page.waitForFile(/\.json$/, { timeout: 15000 });
+  check("Ctrl+S 保存工程", Boolean(saved), path.basename(saved));
+};
+
+suites.projectDeep = async () => {
+  await reload();
+  await importVideo();
+  // 构造一个包含所有可保存内容的工程
+  await page.evaluate("window.vlogHUD.seek(0.5)");
+  await page.evaluate(`window.vlogHUD.set({ caption: "深检工程", weather: "snow" })`);
+  await page.evaluate("window.vlogHUD.setLayer('clock', { x: 900, y: 140, scale: 1.35 })");
+  await page.evaluate("window.vlogHUD.seek(1.5)");
+  await page.evaluate(`window.vlogHUD.set({ caption: "第二帧", stamina: 30 })`);
+  await page.click('[data-layout="portrait"]');
+  await waitForIdle();
+  await page.evaluate(`(() => {
+    const auto = document.querySelector("#autoKeyInput");
+    auto.checked = false;
+    auto.dispatchEvent(new Event("change", { bubbles: true }));
+    document.querySelector("#smoothInput").checked = false;
+    document.querySelector("#smoothInput").dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  const imageId = await page.evaluate(`(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 48; canvas.height = 48;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#22cc88";
+    ctx.fillRect(0, 0, 48, 48);
+    return window.vlogHUD.components.setImage("stamina", canvas.toDataURL("image/png"));
+  })()`);
+  await waitForIdle();
+  const beforeSave = await page.evaluate(`(() => ({
+    frames: window.vlogHUD.keyframes.length,
+    layout: window.vlogHUD.state.layout,
+    clock: window.vlogHUD.layers.clock,
+    imageId: window.vlogHUD.components.imageId("stamina"),
+    autoKey: document.querySelector("#autoKeyInput").checked,
+    smooth: document.querySelector("#smoothInput").checked
+  }))()`);
+
+  await openExportDialog();
+  await clearDownloads();
+  await page.click("#saveProjectButton");
+  const file = await page.waitForFile(/\.json$/);
+  await page.evaluate("document.querySelector('#exportDialog').close()");
+
+  await reload();
+  await page.setFileInput("#projectInput", [file]);
+  await page.waitFor("window.vlogHUD.keyframes.some((f) => f.caption === '第二帧')", { label: "工程加载" });
+  await waitForIdle();
+  await page.evaluate("window.vlogHUD.seek(0.5)");
+  await waitForIdle();
+  const afterLoad = await page.evaluate(`(() => ({
+    frames: window.vlogHUD.keyframes.length,
+    layout: window.vlogHUD.state.layout,
+    clock: window.vlogHUD.layers.clock,
+    autoKey: document.querySelector("#autoKeyInput").checked,
+    smooth: document.querySelector("#smoothInput").checked,
+    canvas: [document.querySelector("#hudCanvas").width, document.querySelector("#hudCanvas").height]
+  }))()`);
+  await page.evaluate("window.vlogHUD.seek(1.5)");
+  await waitForIdle();
+  const imageAfterLoad = await page.evaluate("window.vlogHUD.components.imageId('stamina')");
+  check("工程往返保留关键帧数量", afterLoad.frames === beforeSave.frames, beforeSave.frames + " → " + afterLoad.frames);
+  check("工程往返保留画幅", afterLoad.layout === "portrait" && afterLoad.canvas[0] === 1080, afterLoad.canvas.join("×"));
+  check("工程往返保留图层坐标",
+    Math.abs(afterLoad.clock.x - beforeSave.clock.x) < 1 && Math.abs(afterLoad.clock.scale - beforeSave.clock.scale) < 0.01,
+    JSON.stringify(beforeSave.clock) + " → " + JSON.stringify(afterLoad.clock));
+  check("工程往返保留替换图片", imageAfterLoad === imageId, String(imageAfterLoad));
+  check("工程往返保留开关状态", afterLoad.autoKey === false && afterLoad.smooth === false,
+    `autoKey=${afterLoad.autoKey} smooth=${afterLoad.smooth}`);
+  check("加载工程后清空撤销历史", (await page.evaluate("document.querySelector('#undoButton').disabled")) === true);
+
+  // v1 迁移：自定义物品图片
+  const migrated = await page.evaluate(`(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 16; canvas.height = 16;
+    canvas.getContext("2d").fillRect(0, 0, 16, 16);
+    const dataUrl = canvas.toDataURL("image/png");
+    const legacy = {
+      format: "stardew-vlog-hud",
+      version: 1,
+      layout: "landscape",
+      componentLayout: { clock: { x: 1, y: 2, scale: 1 }, stamina: { x: 3, y: 4, scale: 1 },
+        toolbar: { x: 5, y: 6, scale: 1 }, caption: { x: 7, y: 8, scale: 1 } },
+      customComponentImages: {},
+      customItemImages: { phone: dataUrl },
+      keyframes: [{ at: 0, time: "08:30", weather: "sunny", season: "fall", day: 12, stamina: 100,
+        money: 860, group: "commute", item: "phone", tag: "准备出发", caption: "旧工程",
+        clockVisible: true, staminaVisible: true, toolbarVisible: true, captionVisible: true }]
+    };
+    const result = window.vlogHUD.project.migrate(legacy);
+    return { items: Object.keys(result.itemImages), layers: result.keyframes[0].layers.clock };
+  })()`);
+  check("v1 迁移保留物品图片", migrated.items.includes("phone"), migrated.items.join(","));
+  check("v1 迁移补充图层", migrated.layers.x === 1 && migrated.layers.y === 2, JSON.stringify(migrated.layers));
+};
+
+suites.robustness = async () => {
+  await reload();
+  // 1) 无效视频文件
+  await writeFile(path.join(tmpDir, "broken.mp4"), "this is not a video");
+  await page.setFileInput("#videoInput", [path.join(tmpDir, "broken.mp4")]);
+  await page.waitFor("document.querySelector('#videoName').textContent.includes('失败')", { label: "坏视频提示", timeout: 8000 })
+    .catch(() => {});
+  const broken = await page.evaluate(`(() => ({
+    name: document.querySelector("#videoName").textContent,
+    toast: document.querySelector("#toast").textContent,
+    ready: window.vlogHUD.ready
+  }))()`);
+  check("损坏视频给出失败提示", /失败/.test(broken.name), broken.name);
+  check("损坏视频不会卡住页面", broken.ready === true);
+
+  // 2) 正常导入后再次导入同一视频，不清空关键帧
+  await importVideo();
+  await page.evaluate("window.vlogHUD.seek(0.8)");
+  await page.click("#addKeyframeButton");
+  await waitForIdle();
+  const framesBefore = await page.evaluate("window.vlogHUD.keyframes.length");
+  await page.setFileInput("#videoInput", [testVideo]);
+  await page.waitFor("document.querySelector('#videoPreview').duration > 0", { label: "重新导入" });
+  await waitForIdle();
+  const framesAfter = await page.evaluate("window.vlogHUD.keyframes.length");
+  check("重新导入视频保留关键帧", framesAfter === framesBefore, framesBefore + " → " + framesAfter);
+
+  // 3) 快速连按空格不应产生未捕获异常
+  for (let i = 0; i < 6; i++) {
+    await page.pressKey("Space");
+  }
+  await waitForIdle();
+  check("快速连按空格无异常", page.pageErrors.length === 0, page.pageErrors.join(" | "));
+
+  // 4) 撤销/重做连击
+  await page.evaluate(`window.vlogHUD.set({ money: 4321 })`);
+  for (let i = 0; i < 12; i++) {
+    await page.evaluate("window.vlogHUD.undo()");
+    await page.evaluate("window.vlogHUD.redo()");
+  }
+  await waitForIdle();
+  check("撤销重做连击无异常", page.pageErrors.length === 0, page.pageErrors.join(" | "));
+  check("连击后关键帧仍然有序",
+    (await page.evaluate("window.vlogHUD.keyframes.every((f, i, a) => i === 0 || f.at >= a[i - 1].at)")) === true);
+
+  // 5) 时间轴放大到极限
+  for (let i = 0; i < 12; i++) await page.click("#timelineZoomIn");
+  await waitForIdle();
+  const zoom = await page.evaluate(`(() => ({
+    label: document.querySelector("#timelineZoomLabel").textContent,
+    width: document.querySelector("#timelineTrack").getBoundingClientRect().width,
+    overflow: document.documentElement.scrollWidth - window.innerWidth
+  }))()`);
+  check("时间轴缩放有上限", zoom.label === "1200%", zoom.label);
+  check("放大后页面不横向溢出", zoom.overflow <= 1, zoom.overflow + "px");
+  await page.click("#timelineFitButton");
+
+  // 6) 拖到窗口外再松开，不残留拖拽状态
+  const lane = await page.evaluate(`(() => {
+    const r = document.querySelector("#timelineInner").getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  })()`);
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: lane.left + lane.width * 0.5, y: lane.top + lane.height - 12, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 1490, y: 30, button: "left", buttons: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: 1490, y: 30, button: "left", clickCount: 1 });
+  await waitForIdle();
+  const afterWild = await page.evaluate(`(() => ({
+    bubbleHidden: document.querySelector("#playheadBubble").hidden,
+    frames: window.vlogHUD.keyframes.length
+  }))()`);
+  check("拖出边界后不残留时间气泡", afterWild.bubbleHidden === true);
+};
+
 async function main() {
   await rm(shotsDir, { recursive: true, force: true });
   await rm(tmpDir, { recursive: true, force: true });
@@ -764,7 +1261,7 @@ async function main() {
   const browser = await Browser.launch({ headless: !headed });
   page = await browser.newPage({ width: 1500, height: 980 });
   try {
-    const order = ["baseline", "shell", "timeline", "autokey", "history", "project", "layers", "export", "compact"];
+    const order = ["baseline", "shell", "timeline", "timelineEdge", "autokey", "history", "shortcuts", "project", "projectDeep", "layers", "controls", "robustness", "export", "compact"];
     const selected = wanted.length ? order.filter((name) => wanted.includes(name)) : order;
     await reload();
     for (const name of selected) {

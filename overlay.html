@@ -30,10 +30,10 @@
         <button id="redoButton" class="icon-button" type="button" title="重做 (Ctrl+Shift+Z)" disabled aria-label="重做">↷</button>
         <span class="topbar-divider" aria-hidden="true"></span>
         <button id="libraryToggle" class="icon-button library-toggle" type="button" title="素材库" aria-label="素材库">▤</button>
-        <label class="btn btn-ghost btn-compact file-button" title="打开工程文件">打开
+        <label class="btn btn-ghost btn-compact file-button" title="打开工程文件">打开工程
           <input id="projectInput" type="file" accept="application/json,.json" />
         </label>
-        <button id="saveProjectTopButton" class="btn btn-ghost btn-compact" type="button" title="保存工程 (Ctrl+S)">保存</button>
+        <button id="saveProjectTopButton" class="btn btn-ghost btn-compact" type="button" title="保存工程 (Ctrl+S)">保存工程</button>
         <button id="cleanButton" class="btn btn-ghost" type="button">透明画面</button>
         <button id="exportOpenButton" class="btn btn-primary" type="button">导出成片</button>
       </div>
@@ -276,6 +276,7 @@
       <div id="timelineResizeHandle" class="dock-resizer" title="上下拖动调整时间轴高度"></div>
       <div class="dock-toolbar">
         <div class="dock-title">时间轴</div>
+        <button id="addKeyframeDockButton" class="dock-button" type="button" title="在当前时间添加关键帧 (K)">◆ 加关键帧</button>
         <button id="deleteKeyframeButton" class="dock-button" type="button" title="删除所选关键帧 (Delete)">删除关键帧</button>
         <label class="dock-check" title="拖动时吸附到其他关键帧和播放头">
           <input id="snapInput" type="checkbox" checked /> 吸附
@@ -304,6 +305,7 @@
             </div>
             <div id="timelineLane" class="timeline-lane">
               <div id="keyframeMarkers" class="keyframe-markers" aria-label="关键帧"></div>
+              <div id="activeFrameLabel" class="frame-label" hidden></div>
               <div id="timelineEmpty" class="timeline-empty" hidden>导入视频后，拖动播放头并添加关键帧</div>
               <div id="playheadBubble" class="playhead-bubble" hidden>00:00.00</div>
             </div>
@@ -313,7 +315,7 @@
       </div>
       <div class="dock-footer">
         <span id="keyframeCount">0 个关键帧</span>
-        <span class="dock-hint">拖动菱形改时间 · 双击空白处新增关键帧</span>
+        <span class="dock-hint">点/拖时间轴定位播放头 · 拖菱形改时间 · 双击空白处加帧</span>
       </div>
     </section>
   </div>
