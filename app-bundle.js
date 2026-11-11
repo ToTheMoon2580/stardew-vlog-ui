@@ -357,6 +357,9 @@ const ui = {
   lane: $("#timelineLane"),
   markers: $("#keyframeMarkers"),
   playheadEl: $("#timelinePlayhead"),
+  videoClip: $("#videoClip"),
+  videoClipName: $("#videoClipName"),
+  videoClipDuration: $("#videoClipDuration"),
   zoomIn: $("#timelineZoomIn"),
   zoomOut: $("#timelineZoomOut"),
   zoomFit: $("#timelineFitButton"),
@@ -373,8 +376,11 @@ const ui = {
   exportStatus: $("#exportStatus"),
   exportLog: $("#exportLog"),
   saveProject: $("#saveProjectButton"),
+  saveProjectTop: $("#saveProjectTopButton"),
+  projectLoad: $("#projectLoadButton"),
   projectInput: $("#projectInput"),
   projectMeta: $("#projectMeta"),
+  exportSummary: $("#exportSummary"),
   autosaveBar: $("#autosaveBar"),
   autosaveText: $("#autosaveText"),
   autosaveRestore: $("#autosaveRestore"),
@@ -401,11 +407,14 @@ const ui = {
   staminaVisible: $("#staminaVisibleInput"),
   toolbarVisible: $("#toolbarVisibleInput"),
   selectedLayerName: $("#selectedLayerName"),
+  layerX: $("#layerXInput"),
+  layerY: $("#layerYInput"),
   layerScale: $("#layerScaleInput"),
   layerScaleOutput: $("#layerScaleOutput"),
   frameSummaryState: $("#frameSummaryState"),
   frameSummaryFrame: $("#frameSummaryFrame"),
   timelineEmpty: $("#timelineEmpty"),
+  playheadBubble: $("#playheadBubble"),
   resetLayout: $("#resetLayoutButton"),
   clearImage: $("#clearImageButton"),
   componentImage: $("#componentImageInput"),
@@ -1139,6 +1148,19 @@ function updatePlayheadMarker() {
   ui.playheadEl.style.left = (ratio * 100).toFixed(4) + "%";
 }
 
+function showTimelineBubble(seconds, label) {
+  if (!ui.playheadBubble) return;
+  const duration = timelineDuration();
+  const ratio = duration > 0 ? clamp(seconds / duration, 0, 1) : 0;
+  ui.playheadBubble.style.left = (ratio * 100).toFixed(4) + "%";
+  ui.playheadBubble.textContent = label || formatTimelineTime(seconds);
+  ui.playheadBubble.hidden = false;
+}
+
+function hideTimelineBubble() {
+  if (ui.playheadBubble) ui.playheadBubble.hidden = true;
+}
+
 function renderTimeline() {
   if (!ui.markers) return;
   const duration = timelineDuration();
@@ -1180,6 +1202,35 @@ function updateTimelineMeta(seconds) {
   renderTimeline();
   scrollPlayheadIntoView();
   syncFrameSummary();
+  syncVideoClip();
+}
+
+function syncVideoClip() {
+  if (!ui.videoClip) return;
+  const duration = videoDuration();
+  const hasVideo = Boolean(ui.video.src) && duration > 0;
+  ui.videoClip.hidden = !hasVideo;
+  if (!hasVideo) {
+    ui.exportOpen.disabled = true;
+    ui.exportOpen.title = "请先导入视频后再导出";
+    ui.exportVideo.disabled = true;
+    if (ui.exportSummary) ui.exportSummary.textContent = "尚未导入视频 · 先导入 MP4 / MOV / WebM";
+    return;
+  }
+  const total = timelineDuration();
+  const width = total > 0 ? clamp(duration / total, 0, 1) * 100 : 100;
+  ui.videoClip.style.width = width.toFixed(3) + "%";
+  ui.videoClipName.textContent = videoMeta?.name || "视频";
+  ui.videoClipName.title = videoMeta?.name || "";
+  ui.videoClipDuration.textContent = formatTimelineTime(duration);
+  ui.exportOpen.disabled = false;
+  ui.exportOpen.title = "导出整段动画";
+  ui.exportVideo.disabled = isExporting;
+  if (ui.exportSummary) {
+    const size = canvasSizeFor(state.layout);
+    ui.exportSummary.textContent = keyframes.length + " 个关键帧 · " + formatTimelineTime(duration) +
+      " · " + size.width + "×" + size.height;
+  }
 }
 
 function setTimelineZoom(value) {
@@ -1235,6 +1286,7 @@ function startScrub(event) {
   if (!ui.video.paused) ui.video.pause();
   timelineDrag = { kind: "scrub", pointerId: event.pointerId };
   ui.track.setPointerCapture(event.pointerId);
+  showTimelineBubble(at);
   seekTo(at);
 }
 
@@ -1249,19 +1301,23 @@ function startKeyDrag(event, marker) {
   timelineDrag = { kind: "key", pointerId: event.pointerId, frame, originalAt: frame.at, moved: false };
   marker.classList.add("dragging");
   ui.track.setPointerCapture(event.pointerId);
+  showTimelineBubble(frame.at, "◆ " + formatTimelineTime(frame.at));
   renderTimeline();
 }
 
 function updateTimelineDrag(event) {
   if (!timelineDrag || event.pointerId !== timelineDrag.pointerId) return;
   if (timelineDrag.kind === "scrub") {
-    seekTo(timeFromClientX(event.clientX));
+    const at = timeFromClientX(event.clientX);
+    showTimelineBubble(at);
+    seekTo(at);
     return;
   }
   const at = roundTime(snapTime(timeFromClientX(event.clientX), timelineDrag.frame.at));
   if (Math.abs(at - timelineDrag.frame.at) < 0.0005) return;
   timelineDrag.frame.at = clamp(at, 0, timelineDuration());
   timelineDrag.moved = true;
+  showTimelineBubble(timelineDrag.frame.at, "◆ " + formatTimelineTime(timelineDrag.frame.at));
   sortKeyframes();
   selectedKeyframeIndex = keyframes.indexOf(timelineDrag.frame);
   touchDocument();
@@ -1273,6 +1329,7 @@ function endTimelineDrag(event) {
   if (event && event.pointerId !== timelineDrag.pointerId) return;
   const drag = timelineDrag;
   timelineDrag = null;
+  hideTimelineBubble();
   try {
     ui.track.releasePointerCapture(drag.pointerId);
   } catch {
@@ -1660,6 +1717,7 @@ function render(shouldSync = true) {
   }
   renderTimeline();
   updateSelectionBoxes();
+  if (shouldSync) updateTimelineMeta(currentPlayheadTime());
 }
 
 function syncControls() {
@@ -1695,7 +1753,10 @@ function syncLayerControls() {
   ui.captionVisible.checked = state.captionVisible;
   ui.captionVisibleOverlay.checked = state.captionVisible;
   ui.selectedLayerName.textContent = componentLabel(selectedComponent);
-  const scalePercent = Math.round((componentLayout[selectedComponent]?.scale ?? 1) * 100);
+  const currentLayer = componentLayout[selectedComponent] || { x: 0, y: 0, scale: 1 };
+  if (document.activeElement !== ui.layerX) ui.layerX.value = Math.round(currentLayer.x);
+  if (document.activeElement !== ui.layerY) ui.layerY.value = Math.round(currentLayer.y);
+  const scalePercent = Math.round((currentLayer.scale ?? 1) * 100);
   ui.layerScale.value = String(scalePercent);
   ui.layerScaleOutput.textContent = scalePercent + "%";
   ui.clearImage.disabled = !(selectedComponent === "item" ? customItemData[state.item] : componentImageIds[selectedComponent]);
@@ -1813,6 +1874,7 @@ function syncPresetList() {
 }
 
 function updateFromInputs(label = "画面参数") {
+  if (label === "修改时间" && !/^\d{1,2}:\d{2}$/.test(ui.time.value)) return;
   state.time = ui.time.value || "08:30";
   state.weather = ui.weather.value;
   state.season = ui.season.value;
@@ -1894,6 +1956,7 @@ function setLibraryOpen(open) {
 
 function openExportDialog() {
   updateProjectMeta();
+  syncVideoClip();
   if (ui.exportDialog && !ui.exportDialog.open) {
     if (typeof ui.exportDialog.showModal === "function") ui.exportDialog.showModal();
     else ui.exportDialog.setAttribute("open", "");
@@ -2242,10 +2305,10 @@ function updateProjectMeta() {
       (reference.fps ? " · " + reference.fps + "fps" : "")
     : "未导入视频";
   const suffix = reference === expectedVideo && !videoMeta ? "（待重新导入）" : "";
-  ui.projectMeta.textContent = "工程 v" + PROJECT_VERSION + " · " + keyframes.length + " 个关键帧 · 视频：" + video + suffix;
+  ui.projectMeta.textContent = keyframes.length + " 个关键帧 · 视频：" + video + suffix;
   if (ui.topbarMeta) {
     ui.topbarMeta.textContent = reference
-      ? reference.name + " · " + formatTimelineTime(reference.duration) + (videoMeta ? "" : " · 待导入") + " · " + keyframes.length + " 帧"
+      ? reference.name + " · " + formatTimelineTime(reference.duration) + (videoMeta ? "" : " · 待导入") + " · " + keyframes.length + " 个关键帧"
       : "未导入视频 · " + keyframes.length + " 个关键帧";
   }
 }
@@ -2880,6 +2943,23 @@ function bindControls() {
   ui.layerScale.addEventListener("pointerup", finishScale);
   ui.layerScale.addEventListener("pointercancel", finishScale);
 
+  const moveLayerToInputs = () => {
+    const layout = componentLayout[selectedComponent];
+    if (!layout) return;
+    beginGesture("调整图层坐标");
+    const x = Number(ui.layerX.value);
+    const y = Number(ui.layerY.value);
+    if (Number.isFinite(x)) layout.x = x;
+    if (Number.isFinite(y)) layout.y = y;
+    commitLiveState("调整图层坐标", { record: false });
+  };
+  ui.layerX.addEventListener("input", moveLayerToInputs);
+  ui.layerY.addEventListener("input", moveLayerToInputs);
+  ui.layerX.addEventListener("pointerdown", () => beginGesture("调整图层坐标"));
+  ui.layerY.addEventListener("pointerdown", () => beginGesture("调整图层坐标"));
+  ui.layerX.addEventListener("change", () => endGesture());
+  ui.layerY.addEventListener("change", () => endGesture());
+
   ui.resetLayout.addEventListener("click", () => {
     recordHistory("恢复原版位置");
     componentLayout = defaultComponentLayout(state.layout);
@@ -2930,6 +3010,8 @@ function bindControls() {
   ui.exportVideo.addEventListener("click", exportVideo);
   ui.cancelExport.addEventListener("click", cancelExport);
   ui.saveProject.addEventListener("click", saveProjectFile);
+  ui.saveProjectTop.addEventListener("click", saveProjectFile);
+  ui.projectLoad.addEventListener("click", () => ui.projectInput.click());
   ui.projectInput.addEventListener("change", async () => {
     const file = ui.projectInput.files?.[0];
     if (!file) return;

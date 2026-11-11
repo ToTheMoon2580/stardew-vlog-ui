@@ -149,6 +149,7 @@ suites.baseline = async () => {
   check("初始无可撤销操作", metrics.undoDisabled === true);
   check("帧摘要显示当前状态", /周五 12日 · 秋 · 晴天/.test(metrics.summary), metrics.summary);
   check("无视频时显示时间轴空状态", metrics.emptyHint === true);
+  check("无视频时导出按钮禁用", (await page.evaluate("document.querySelector('#exportOpenButton').disabled")) === true);
 
   const painted = await page.evaluate(`(() => {
     const canvas = document.querySelector("#hudCanvas");
@@ -217,6 +218,7 @@ suites.baseline = async () => {
 
 suites.shell = async () => {
   await reload();
+  await importVideo();
   await openExportDialog();
   check("点击导出打开弹窗", await page.evaluate("document.querySelector('#exportDialog').open === true"));
   await page.pressKey("Escape");
@@ -268,6 +270,20 @@ suites.timeline = async () => {
   check("视频导入并读取时长", info.duration > 0, info.duration.toFixed(3) + "s " + info.w + "×" + info.h);
   check("时间轴标尺有刻度", info.ticks >= 2, info.ticks + " 个刻度");
   check("导入视频后空状态隐藏", info.empty === true);
+
+  const clip = await page.evaluate(`(() => {
+    const clip = document.querySelector("#videoClip");
+    const inner = document.querySelector("#timelineInner");
+    return {
+      hidden: clip.hidden,
+      name: document.querySelector("#videoClipName").textContent,
+      ratio: clip.getBoundingClientRect().width / inner.getBoundingClientRect().width,
+      exportEnabled: document.querySelector("#exportOpenButton").disabled === false
+    };
+  })()`);
+  check("时间轴出现视频轨", clip.hidden === false && /video-editor-demo/.test(clip.name), clip.name);
+  check("视频轨宽度对应片长", near(clip.ratio, 1, 0.02), (clip.ratio * 100).toFixed(1) + "%");
+  check("导入后导出按钮可用", clip.exportEnabled === true);
 
   const lane = await page.evaluate(`(() => {
     const r = document.querySelector("#timelineTrack").getBoundingClientRect();
@@ -344,6 +360,8 @@ suites.autokey = async () => {
   const frames = await page.evaluate("window.vlogHUD.keyframes");
   check("自动关键帧在播放头写入", frames.some((frame) => Math.abs(frame.at - 1.0) < 0.1 && frame.weather === "rain"),
     frames.map((f) => f.at + ":" + f.weather).join(" / "));
+  const countText = await page.evaluate("document.querySelector('#keyframeCount').textContent");
+  check("自动建帧后计数立即同步", /2 个关键帧/.test(countText), countText);
 
   await page.evaluate("window.vlogHUD.seek(0.0)");
   await page.evaluate(`window.vlogHUD.set({ weather: "snow" })`);
@@ -393,6 +411,16 @@ suites.history = async () => {
   await page.evaluate("window.vlogHUD.redo()");
   await page.waitFor("window.vlogHUD.state.day === 27", { label: "重做生效" });
   check("重做恢复修改", (await page.evaluate("window.vlogHUD.state.day")) === 27);
+
+  const timeBefore = await page.evaluate("window.vlogHUD.state.time");
+  await page.evaluate(`(() => {
+    const input = document.querySelector("#timeInput");
+    input.value = "";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  check("时间输入不完整时不写入", (await page.evaluate("window.vlogHUD.state.time")) === timeBefore,
+    timeBefore + " 保持不变");
 
   await page.pressKey("z", { modifiers: 2 });
   await page.waitFor("window.vlogHUD.state.day !== 27", { label: "Ctrl+Z 撤销" });
@@ -579,6 +607,23 @@ suites.layers = async () => {
 
   const serialized = await page.evaluate("window.vlogHUD.project.serialize()");
   check("工程保存图片库", Boolean(serialized.images[imageId]), Object.keys(serialized.images).join(","));
+
+  const beforeXY = await page.evaluate("window.vlogHUD.layers.clock");
+  await page.click('[data-inspector-tab="layers"]');
+  await page.evaluate(`(() => {
+    const x = document.querySelector("#layerXInput");
+    x.value = "720";
+    x.dispatchEvent(new Event("input", { bubbles: true }));
+    const y = document.querySelector("#layerYInput");
+    y.value = "120";
+    y.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  const afterXY = await page.evaluate("window.vlogHUD.layers.clock");
+  check("图层坐标可精确输入", Math.abs(afterXY.x - 720) < 1 && Math.abs(afterXY.y - 120) < 1,
+    `${Math.round(beforeXY.x)},${Math.round(beforeXY.y)} → ${Math.round(afterXY.x)},${Math.round(afterXY.y)}`);
+  await page.evaluate("window.vlogHUD.undo()");
+  await waitForIdle();
 
   await reload();
   await page.evaluate(`window.vlogHUD.project.load(${JSON.stringify(serialized)})`);

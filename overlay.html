@@ -30,6 +30,10 @@
         <button id="redoButton" class="icon-button" type="button" title="重做 (Ctrl+Shift+Z)" disabled aria-label="重做">↷</button>
         <span class="topbar-divider" aria-hidden="true"></span>
         <button id="libraryToggle" class="icon-button library-toggle" type="button" title="素材库" aria-label="素材库">▤</button>
+        <label class="btn btn-ghost btn-compact file-button" title="打开工程文件">打开
+          <input id="projectInput" type="file" accept="application/json,.json" />
+        </label>
+        <button id="saveProjectTopButton" class="btn btn-ghost btn-compact" type="button" title="保存工程 (Ctrl+S)">保存</button>
         <button id="cleanButton" class="btn btn-ghost" type="button">透明画面</button>
         <button id="exportOpenButton" class="btn btn-primary" type="button">导出成片</button>
       </div>
@@ -85,20 +89,6 @@
             <div id="itemPicker" class="item-picker" aria-label="选择当前手持物"></div>
             <p class="file-line">当前：<strong id="selectedItemName">手机</strong></p>
           </section>
-
-          <section class="block">
-            <h3 class="block-title">快捷键</h3>
-            <dl class="shortcut-list">
-              <dt>空格</dt>
-              <dd>播放 / 暂停</dd>
-              <dt>K</dt>
-              <dd>添加关键帧</dd>
-              <dt>← →</dt>
-              <dd>微调 0.1 秒</dd>
-              <dt>Ctrl+Z</dt>
-              <dd>撤销</dd>
-            </dl>
-          </section>
         </div>
       </aside>
 
@@ -137,6 +127,7 @@
             <span id="durationLabel" class="timecode-total">00:00.00</span>
           </div>
           <button id="addKeyframeButton" class="btn btn-ghost keyframe-cta" type="button" title="在当前时间添加关键帧 (K)">◆ 添加关键帧</button>
+          <span class="transport-tip">空格播放 · K 加关键帧 · 拖动菱形改时间</span>
         </div>
       </section>
 
@@ -150,8 +141,7 @@
         <div id="frameSummary" class="frame-summary">
           <span id="frameSummaryState">周五 12日 · 秋 · 晴天 · 上午 8:30</span>
           <span id="frameSummaryFrame" class="frame-summary-tag">播放头 0:00.00</span>
-        </div>
-        <div class="inspector-scroll">
+        </div>        <div class="inspector-scroll">
           <section class="inspector-panel" data-panel="scene">
             <div class="panel-head">
               <h2>时钟与天气</h2>
@@ -225,6 +215,14 @@
               <label><input id="captionVisibleInputOverlay" type="checkbox" checked /> 信息卡</label>
             </div>
             <p class="hint">在预览中拖动组件移动位置，拖右下角方块缩放。位置、缩放和替换的图片都会写进当前时间的关键帧。</p>
+            <div class="field-grid two">
+              <label class="field">X 坐标
+                <input id="layerXInput" type="number" step="1" />
+              </label>
+              <label class="field">Y 坐标
+                <input id="layerYInput" type="number" step="1" />
+              </label>
+            </div>
             <label class="field range-field">
               <span>当前图层大小 <output id="layerScaleOutput">100%</output></span>
               <input id="layerScaleInput" type="range" min="50" max="200" value="100" />
@@ -298,9 +296,16 @@
         <div id="timelineTrack" class="timeline-track">
           <div id="timelineInner" class="timeline-inner">
             <div id="timelineRuler" class="timeline-ruler"></div>
+            <div id="videoLane" class="timeline-video-lane" aria-label="视频轨">
+              <div id="videoClip" class="video-clip" hidden>
+                <span id="videoClipName" class="video-clip-name">视频</span>
+                <span id="videoClipDuration" class="video-clip-duration">00:00.00</span>
+              </div>
+            </div>
             <div id="timelineLane" class="timeline-lane">
               <div id="keyframeMarkers" class="keyframe-markers" aria-label="关键帧"></div>
               <div id="timelineEmpty" class="timeline-empty" hidden>导入视频后，拖动播放头并添加关键帧</div>
+              <div id="playheadBubble" class="playhead-bubble" hidden>00:00.00</div>
             </div>
             <div id="timelinePlayhead" class="timeline-playhead" aria-hidden="true"><i></i></div>
           </div>
@@ -326,9 +331,10 @@
     <div class="dialog-body">
       <p id="projectMeta" class="file-line">工程 v2 · 0 个关键帧 · 视频：未导入视频</p>
       <div class="export-actions">
-        <button id="exportVideoButton" class="btn btn-primary wide" type="button">导出当前关键帧动画</button>
+        <button id="exportVideoButton" class="btn btn-primary wide" type="button">导出整段动画</button>
         <button id="cancelExportButton" class="btn btn-danger" type="button" disabled>取消</button>
       </div>
+      <p id="exportSummary" class="export-summary">0 个关键帧 · 00:00.00 · 1920×1080</p>
       <progress id="exportProgress" class="export-progress" max="1" value="0"></progress>
       <p id="exportStatus" class="hint">优先导出通用 MP4；浏览器不支持时自动改用 WebM。导出是实时录制，耗时约等于视频时长。</p>
       <ol id="exportLog" class="export-log" aria-label="导出日志"></ol>
@@ -340,9 +346,7 @@
         </div>
         <div class="project-row">
           <button id="saveProjectButton" class="btn btn-ghost" type="button">保存工程</button>
-          <label class="btn btn-ghost file-button">加载工程
-            <input id="projectInput" type="file" accept="application/json,.json" />
-          </label>
+          <button id="projectLoadButton" class="btn btn-ghost" type="button">加载工程</button>
         </div>
         <p class="hint">工程会记录画幅、关键帧、图层位置、自定义图片和视频信息，不含原视频文件。</p>
       </div>
