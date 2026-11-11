@@ -6,10 +6,9 @@
 //   node qa/verify.mjs --headed       # watch the browser
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import os from "node:os";
 import { Browser } from "./browser.mjs";
 
 const run = promisify(execFile);
@@ -69,9 +68,7 @@ async function probeVideo(file) {
 async function reload({ keepStorage = false } = {}) {
   await page.goto(pageUrl);
   if (!keepStorage) await page.evaluate("localStorage.clear()");
-  await page.waitFor("window.vlogHUD && window.vlogHUD.ready === true", {
-    label: "HUD 与选区渲染完成"
-  });
+  await page.waitFor("window.vlogHUD && window.vlogHUD.ready === true", { label: "HUD 渲染完成" });
   await waitForIdle();
 }
 
@@ -93,6 +90,16 @@ async function dragOnPage(from, to, steps = 6) {
   await waitForIdle();
 }
 
+async function setLayout(mode) {
+  await page.click(`[data-layout="${mode}"]`);
+  await waitForIdle();
+}
+
+async function openExportDialog() {
+  await page.click("#exportOpenButton");
+  await page.waitFor("document.querySelector('#exportDialog').open === true", { label: "导出弹窗打开" });
+}
+
 const suites = {};
 
 suites.baseline = async () => {
@@ -100,34 +107,48 @@ suites.baseline = async () => {
   check("页面无 JavaScript 异常", page.pageErrors.length === 0, page.pageErrors.join(" | "));
   check("控制台无错误日志", page.consoleErrors.length === 0, page.consoleErrors.join(" | "));
 
-  const metrics = await page.evaluate(`(() => ({
-    weathers: document.querySelectorAll("#weatherInput option").length,
-    groups: document.querySelectorAll("#groupInput option").length,
-    items: document.querySelectorAll(".item-choice").length,
-    selections: document.querySelectorAll(".component-selection").length,
-    editorHeight: Math.round(document.querySelector("#editorPanel").getBoundingClientRect().height),
-    canvasWidth: document.querySelector("#hudCanvas").width,
-    canvasHeight: document.querySelector("#hudCanvas").height,
-    stageWidth: Math.round(document.querySelector("#previewStage").getBoundingClientRect().width),
-    stageHeight: Math.round(document.querySelector("#previewStage").getBoundingClientRect().height),
-    tabs: document.querySelectorAll(".editor-tab").length,
-    activeTab: document.querySelector("#editorPanel").dataset.activeTab,
-    hasTimeline: Boolean(document.querySelector("#timelineTrack")),
-    undoDisabled: document.querySelector("#undoButton").disabled
-  }))()`);
+  const metrics = await page.evaluate(`(() => {
+    const lib = document.querySelector("#libraryPanel").getBoundingClientRect();
+    const stage = document.querySelector("#previewStage").getBoundingClientRect();
+    const insp = document.querySelector("#inspectorPanel").getBoundingClientRect();
+    const dock = document.querySelector("#timelineDock").getBoundingClientRect();
+    const canvas = document.querySelector("#hudCanvas");
+    return {
+      weathers: document.querySelectorAll("#weatherInput option").length,
+      groups: document.querySelectorAll("#groupInput option").length,
+      items: document.querySelectorAll(".item-choice").length,
+      presets: document.querySelectorAll(".preset-chip").length,
+      selections: document.querySelectorAll(".component-selection").length,
+      tabs: document.querySelectorAll(".inspector-tab").length,
+      activeTab: document.querySelector("#inspectorPanel").dataset.activeTab,
+      canvas: [canvas.width, canvas.height],
+      stage: [Math.round(stage.width), Math.round(stage.height)],
+      library: Math.round(lib.width),
+      inspector: Math.round(insp.width),
+      dock: Math.round(dock.height),
+      order: [Math.round(lib.left), Math.round(stage.left - lib.right), Math.round(insp.left - stage.right)],
+      undoDisabled: document.querySelector("#undoButton").disabled,
+      summary: document.querySelector("#frameSummaryState").textContent,
+      emptyHint: !document.querySelector("#timelineEmpty").hidden
+    };
+  })()`);
 
   check("天气选项 7 个", metrics.weathers === 7, String(metrics.weathers));
   check("工具组 6 个", metrics.groups === 6, String(metrics.groups));
   check("原版物品按钮 17 个", metrics.items === 17, String(metrics.items));
+  check("场景预设 9 个", metrics.presets === 9, String(metrics.presets));
   check("HUD 选区 4 个", metrics.selections === 4, String(metrics.selections));
-  check("编辑器默认高度 400px", near(metrics.editorHeight, 400, 2), metrics.editorHeight + "px");
-  check("Canvas 横屏 1920×1080", metrics.canvasWidth === 1920 && metrics.canvasHeight === 1080,
-    metrics.canvasWidth + "×" + metrics.canvasHeight);
-  check("预览区与 Canvas 宽高比一致", near(metrics.stageWidth / metrics.stageHeight, 1920 / 1080, 0.01),
-    (metrics.stageWidth / metrics.stageHeight).toFixed(4));
-  check("默认分页为剪辑", metrics.activeTab === "video", metrics.activeTab);
-  check("时间轴已渲染", metrics.hasTimeline);
+  check("检查器分页 4 个", metrics.tabs === 4, String(metrics.tabs));
+  check("默认分页为画面", metrics.activeTab === "scene", metrics.activeTab);
+  check("Canvas 横屏 1920×1080", metrics.canvas[0] === 1920 && metrics.canvas[1] === 1080, metrics.canvas.join("×"));
+  check("预览区与 Canvas 宽高比一致", near(metrics.stage[0] / metrics.stage[1], 1920 / 1080, 0.01),
+    (metrics.stage[0] / metrics.stage[1]).toFixed(4));
+  check("三栏工作台顺序", metrics.order[0] === 0 && metrics.order[1] >= 0 && metrics.order[2] >= 0,
+    "素材库 " + metrics.library + "px · 舞台间隙 " + metrics.order[1] + "px · 检查器 " + metrics.inspector + "px");
+  check("时间轴默认高度约 208px", near(metrics.dock, 208, 12), metrics.dock + "px");
   check("初始无可撤销操作", metrics.undoDisabled === true);
+  check("帧摘要显示当前状态", /周五 12日 · 秋 · 晴天/.test(metrics.summary), metrics.summary);
+  check("无视频时显示时间轴空状态", metrics.emptyHint === true);
 
   const painted = await page.evaluate(`(() => {
     const canvas = document.querySelector("#hudCanvas");
@@ -139,25 +160,27 @@ suites.baseline = async () => {
   check("HUD 已绘制像素", painted > 50000, painted + " px");
   await page.screenshot(path.join(shotsDir, "baseline-landscape.png"));
 
-  await page.click('[data-editor-tab="layers"]');
+  await page.click('[data-inspector-tab="layers"]');
   await waitForIdle();
   const layersTab = await page.evaluate(`(() => ({
-    active: document.querySelector("#editorPanel").dataset.activeTab,
-    visible: [...document.querySelectorAll(".control-section[data-panel]")].filter((s) => !s.classList.contains("panel-hidden")).map((s) => s.dataset.panel)
+    active: document.querySelector("#inspectorPanel").dataset.activeTab,
+    visible: [...document.querySelectorAll(".inspector-panel[data-panel]")].filter((p) => !p.hidden).map((p) => p.dataset.panel)
   }))()`);
-  check("分页切换到图层", layersTab.active === "layers" && layersTab.visible.every((panel) => panel === "layers"),
+  check("检查器切换到图层", layersTab.active === "layers" && layersTab.visible.length === 1 && layersTab.visible[0] === "layers",
     layersTab.visible.join(","));
-  await page.click('[data-editor-tab="video"]');
+  await page.click('[data-inspector-tab="scene"]');
 
-  const before = await page.evaluate("Math.round(document.querySelector('#editorPanel').getBoundingClientRect().height)");
+  // Timeline dock resize
+  const dockBefore = await page.evaluate("Math.round(document.querySelector('#timelineDock').getBoundingClientRect().height)");
   const handle = await page.evaluate(`(() => {
-    const r = document.querySelector("#editorResizeHandle").getBoundingClientRect();
+    const r = document.querySelector("#timelineResizeHandle").getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   })()`);
   await dragOnPage(handle, { x: handle.x, y: handle.y - 90 }, 4);
-  const after = await page.evaluate("Math.round(document.querySelector('#editorPanel').getBoundingClientRect().height)");
-  check("编辑器高度可拖动", after > before + 60, before + " → " + after);
+  const dockAfter = await page.evaluate("Math.round(document.querySelector('#timelineDock').getBoundingClientRect().height)");
+  check("时间轴高度可拖动", dockAfter > dockBefore + 60, dockBefore + " → " + dockAfter);
 
+  // Component drag
   const clockBox = await page.evaluate(`(() => {
     const r = document.querySelector('.component-selection[data-component="clock"]').getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
@@ -165,16 +188,10 @@ suites.baseline = async () => {
   const beforeMove = await page.evaluate("window.vlogHUD.layers.clock");
   await dragOnPage(clockBox, { x: clockBox.x - 120, y: clockBox.y + 60 }, 6);
   const afterMove = await page.evaluate("window.vlogHUD.layers.clock");
-  check("模块拖动生效", Math.abs(afterMove.x - beforeMove.x) > 50,
-    `x ${Math.round(beforeMove.x)} → ${Math.round(afterMove.x)}`);
+  check("模块拖动生效", Math.abs(afterMove.x - beforeMove.x) > 50, `x ${Math.round(beforeMove.x)} → ${Math.round(afterMove.x)}`);
 
   const clockBefore = await page.evaluate("window.vlogHUD.layers.clock");
-  await page.evaluate(`(() => {
-    const select = document.querySelector("#layoutInput");
-    select.value = "portrait";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  })()`);
-  await waitForIdle();
+  await setLayout("portrait");
   const portrait = await page.evaluate(`(() => ({
     w: document.querySelector("#hudCanvas").width,
     h: document.querySelector("#hudCanvas").height,
@@ -182,7 +199,9 @@ suites.baseline = async () => {
     sh: document.querySelector("#previewStage").getBoundingClientRect().height,
     selections: document.querySelectorAll(".component-selection").length,
     clockX: window.vlogHUD.layers.clock.x,
-    toolbarX: window.vlogHUD.layers.toolbar.x
+    toolbarX: window.vlogHUD.layers.toolbar.x,
+    segment: document.querySelector('[data-layout="portrait"]').classList.contains("active"),
+    note: document.querySelector("#stageNote").textContent
   }))()`);
   check("竖屏 Canvas 1080×1920", portrait.w === 1080 && portrait.h === 1920, portrait.w + "×" + portrait.h);
   check("竖屏预览宽高比一致", near(portrait.sw / portrait.sh, 1080 / 1920, 0.01), (portrait.sw / portrait.sh).toFixed(4));
@@ -190,15 +209,52 @@ suites.baseline = async () => {
   check("调整过的图层按比例重映射", near(portrait.clockX, clockBefore.x * 1080 / 1920, 4),
     Math.round(clockBefore.x) + " → " + Math.round(portrait.clockX));
   check("未调整图层贴合竖屏默认位置", near(portrait.toolbarX, 140, 1), "toolbar.x=" + Math.round(portrait.toolbarX));
+  check("画幅分段按钮同步", portrait.segment === true && portrait.note.includes("1080"), portrait.note);
   await page.screenshot(path.join(shotsDir, "baseline-portrait.png"));
-
-  await page.evaluate(`(() => {
-    const select = document.querySelector("#layoutInput");
-    select.value = "landscape";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  })()`);
-  await waitForIdle();
+  await setLayout("landscape");
   check("运行期无新增异常", page.pageErrors.length === 0, page.pageErrors.join(" | "));
+};
+
+suites.shell = async () => {
+  await reload();
+  await openExportDialog();
+  check("点击导出打开弹窗", await page.evaluate("document.querySelector('#exportDialog').open === true"));
+  await page.pressKey("Escape");
+  await waitForIdle();
+  check("Esc 关闭导出弹窗", (await page.evaluate("document.querySelector('#exportDialog').open")) === false);
+
+  await page.evaluate("document.body.classList.add('library-open')");
+  await waitForIdle();
+  const drawer = await page.evaluate(`(() => {
+    const lib = document.querySelector("#libraryPanel").getBoundingClientRect();
+    return { open: document.body.classList.contains("library-open"), visible: lib.left >= 0 };
+  })()`);
+  check("素材库抽屉可打开", drawer.open === true);
+  await page.evaluate("document.body.classList.remove('library-open')");
+
+  const overflow = await page.evaluate(`(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    innerWidth: window.innerWidth
+  }))()`);
+  check("桌面视口无横向溢出", overflow.scrollWidth <= overflow.innerWidth + 1,
+    overflow.scrollWidth + " / " + overflow.innerWidth);
+
+  await page.evaluate("document.querySelector('#cleanButton').click()");
+  await waitForIdle();
+  const clean = await page.evaluate(`(() => {
+    const shell = document.querySelector(".app-shell");
+    const stage = document.querySelector("#previewStage").getBoundingClientRect();
+    return {
+      clean: document.body.classList.contains("clean"),
+      shellHidden: getComputedStyle(shell).display === "none",
+      stage: [Math.round(stage.width), Math.round(stage.height)]
+    };
+  })()`);
+  check("透明画面隐藏编辑器", clean.clean === true && clean.shellHidden === false && clean.stage[0] > 1400,
+    "舞台 " + clean.stage.join("×"));
+  await page.pressKey("e");
+  await waitForIdle();
+  check("按 E 返回编辑器", (await page.evaluate("document.body.classList.contains('clean')")) === false);
 };
 
 suites.timeline = async () => {
@@ -206,12 +262,13 @@ suites.timeline = async () => {
   await importVideo();
   const info = await page.evaluate(`(() => {
     const v = document.querySelector("#videoPreview");
-    return { duration: v.duration, w: v.videoWidth, h: v.videoHeight, ticks: document.querySelectorAll(".timeline-tick").length };
+    return { duration: v.duration, w: v.videoWidth, h: v.videoHeight, ticks: document.querySelectorAll(".timeline-tick").length,
+      empty: document.querySelector("#timelineEmpty").hidden };
   })()`);
   check("视频导入并读取时长", info.duration > 0, info.duration.toFixed(3) + "s " + info.w + "×" + info.h);
   check("时间轴标尺有刻度", info.ticks >= 2, info.ticks + " 个刻度");
+  check("导入视频后空状态隐藏", info.empty === true);
 
-  // Scrub on the track
   const lane = await page.evaluate(`(() => {
     const r = document.querySelector("#timelineTrack").getBoundingClientRect();
     return { left: r.left, top: r.top, width: r.width, height: r.height };
@@ -219,13 +276,12 @@ suites.timeline = async () => {
   const scrubX = lane.left + lane.width * 0.5;
   await dragOnPage({ x: scrubX, y: lane.top + lane.height - 8 }, { x: lane.left + lane.width * 0.75, y: lane.top + lane.height - 8 }, 5);
   const scrubbed = await page.evaluate(`(() => ({
-    playhead: window.vlogHUD.state && document.querySelector("#currentTimeLabel").textContent,
+    label: document.querySelector("#currentTimeLabel").textContent,
     videoTime: document.querySelector("#videoPreview").currentTime
   }))()`);
   check("拖动时间轴可定位", Math.abs(scrubbed.videoTime - info.duration * 0.75) < 0.15,
-    scrubbed.playhead + " / video=" + scrubbed.videoTime.toFixed(2));
+    scrubbed.label + " / video=" + scrubbed.videoTime.toFixed(2));
 
-  // Build 3 keyframes through the UI
   await page.evaluate("window.vlogHUD.seek(0.2)");
   await page.evaluate(`window.vlogHUD.set({ time: "09:00", stamina: 90, money: 200 })`);
   await page.evaluate("window.vlogHUD.seek(1.6)");
@@ -234,14 +290,13 @@ suites.timeline = async () => {
   check("编辑时自动记录关键帧", frames.length >= 3, frames.map((f) => f.at.toFixed(2)).join("/"));
   check("关键帧按时间排序", frames.every((frame, index) => index === 0 || frame.at >= frames[index - 1].at));
 
-  const mid = await page.evaluate("(() => window.vlogHUD.stateAt(0.9))()");
+  const mid = await page.evaluate("window.vlogHUD.stateAt(0.9)");
   check("关键帧之间插值生效", mid.stamina > 40 && mid.stamina < 90, "stamina=" + mid.stamina + " time=" + mid.time);
 
   const markerCount = await page.evaluate("document.querySelectorAll('.keyframe-marker').length");
   check("时间轴显示菱形标记", markerCount === frames.length, markerCount + " 个");
   await page.screenshot(path.join(shotsDir, "timeline.png"));
 
-  // Drag a keyframe to retime it
   const targetIndex = 1;
   const markerBox = await page.evaluate(`(() => {
     const marker = document.querySelector('.keyframe-marker[data-index="${targetIndex}"]');
@@ -258,7 +313,6 @@ suites.timeline = async () => {
   check("关键帧可拖动改时间", moved > markerBox.at + 0.05, markerBox.at.toFixed(2) + " → " + moved.toFixed(2));
   check("拖动后仍按时间排序", retimed.frames.every((frame, index) => index === 0 || frame.at >= retimed.frames[index - 1].at));
 
-  // Zoom
   const widthBefore = await page.evaluate("document.querySelector('#timelineTrack').getBoundingClientRect().width");
   await page.click("#timelineZoomIn");
   await page.click("#timelineZoomIn");
@@ -270,7 +324,6 @@ suites.timeline = async () => {
   const widthFit = await page.evaluate("document.querySelector('#timelineTrack').getBoundingClientRect().width");
   check("时间轴可适应窗口", near(widthFit, widthBefore, 2), Math.round(widthFit) + "px");
 
-  // Double click empty area adds a keyframe
   const countBefore = await page.evaluate("window.vlogHUD.keyframes.length");
   await page.send("Input.dispatchMouseEvent", {
     type: "mousePressed", x: lane.left + lane.width * 0.35, y: lane.top + lane.height - 8, button: "left", clickCount: 2
@@ -302,7 +355,6 @@ suites.autokey = async () => {
   await page.waitFor("window.vlogHUD.history.undo >= 0");
   await waitForIdle();
 
-  // Auto-key OFF keeps the frame count and writes into the previous keyframe
   await page.evaluate(`(() => {
     const input = document.querySelector("#autoKeyInput");
     input.checked = false;
@@ -337,24 +389,18 @@ suites.history = async () => {
 
   await page.evaluate("window.vlogHUD.undo()");
   await page.waitFor("window.vlogHUD.state.day !== 27", { label: "撤销生效" });
-  const afterUndo = await page.evaluate("window.vlogHUD.state.day");
-  check("撤销恢复修改前状态", afterUndo === before, changed + " → " + afterUndo);
-
+  check("撤销恢复修改前状态", (await page.evaluate("window.vlogHUD.state.day")) === before);
   await page.evaluate("window.vlogHUD.redo()");
   await page.waitFor("window.vlogHUD.state.day === 27", { label: "重做生效" });
-  const afterRedo = await page.evaluate("window.vlogHUD.state.day");
-  check("重做恢复修改", afterRedo === 27, afterUndo + " → " + afterRedo);
+  check("重做恢复修改", (await page.evaluate("window.vlogHUD.state.day")) === 27);
 
-  // Keyboard shortcut
   await page.pressKey("z", { modifiers: 2 });
   await page.waitFor("window.vlogHUD.state.day !== 27", { label: "Ctrl+Z 撤销" });
   check("Ctrl+Z 快捷键撤销", (await page.evaluate("window.vlogHUD.state.day")) === before);
-
   await page.pressKey("z", { modifiers: 2 | 8 });
   await page.waitFor("window.vlogHUD.state.day === 27", { label: "Ctrl+Shift+Z 重做" });
   check("Ctrl+Shift+Z 快捷键重做", (await page.evaluate("window.vlogHUD.state.day")) === 27);
 
-  // Keyframe add/delete undo
   await page.evaluate("window.vlogHUD.seek(1.0)");
   const countBefore = await page.evaluate("window.vlogHUD.keyframes.length");
   await page.click("#addKeyframeButton");
@@ -362,10 +408,8 @@ suites.history = async () => {
   const countAfterAdd = await page.evaluate("window.vlogHUD.keyframes.length");
   await page.evaluate("window.vlogHUD.undo()");
   await page.waitFor(`window.vlogHUD.keyframes.length === ${countBefore}`, { label: "撤销新增关键帧" });
-  check("撤销新增关键帧", countAfterAdd === countBefore + 1 && (await page.evaluate("window.vlogHUD.keyframes.length")) === countBefore,
-    countBefore + " → " + countAfterAdd + " → " + countBefore);
+  check("撤销新增关键帧", countAfterAdd === countBefore + 1, countBefore + " → " + countAfterAdd + " → " + countBefore);
 
-  // Layer drag undo
   const beforeDrag = await page.evaluate("window.vlogHUD.layers.caption");
   const box = await page.evaluate(`(() => {
     const r = document.querySelector('.component-selection[data-component="caption"]').getBoundingClientRect();
@@ -378,15 +422,13 @@ suites.history = async () => {
   await page.waitFor(`Math.abs(window.vlogHUD.layers.caption.x - ${beforeDrag.x}) < 1`, { label: "撤销图层拖动" });
   check("撤销图层拖动", Math.abs((await page.evaluate("window.vlogHUD.layers.caption")).x - beforeDrag.x) < 1);
 
-  // Guard: the last keyframe can never be deleted
   await page.evaluate(`(() => {
     while (window.vlogHUD.keyframes.length > 1) window.vlogHUD.deleteKeyframe();
   })()`);
   await waitForIdle();
   await page.evaluate("document.querySelector('#deleteKeyframeButton').click()");
   await waitForIdle();
-  check("保留最后一个关键帧", (await page.evaluate("window.vlogHUD.keyframes.length")) === 1,
-    String(await page.evaluate("window.vlogHUD.keyframes.length")));
+  check("保留最后一个关键帧", (await page.evaluate("window.vlogHUD.keyframes.length")) === 1);
 };
 
 suites.project = async () => {
@@ -395,7 +437,7 @@ suites.project = async () => {
   await page.evaluate("window.vlogHUD.seek(0.6)");
   await page.evaluate(`window.vlogHUD.set({ caption: "工程持久化测试", money: 1234 })`);
 
-  await page.click('[data-editor-tab="export"]');
+  await openExportDialog();
   await page.click("#saveProjectButton");
   const file = await page.waitForFile(/\.json$/);
   const project = JSON.parse(await readFile(file, "utf8"));
@@ -403,8 +445,8 @@ suites.project = async () => {
   check("工程版本为 2", project.version === 2, String(project.version));
   check("工程记录视频元数据", Boolean(project.video && project.video.name), JSON.stringify(project.video));
   check("工程记录关键帧图层", Array.isArray(project.keyframes) && Boolean(project.keyframes[0].layers), "layers ok");
+  await page.evaluate("document.querySelector('#exportDialog').close()");
 
-  // v1 migration: build a legacy shaped project from the current one
   const migrated = await page.evaluate(`(() => {
     const current = window.vlogHUD.project.serialize();
     const legacy = {
@@ -423,13 +465,11 @@ suites.project = async () => {
       })
     };
     const result = window.vlogHUD.project.migrate(legacy);
-    return { version: result.version, imageKeys: Object.keys(result.images), layers: result.keyframes[0].layers.clock };
+    return { version: result.version, layers: result.keyframes[0].layers.clock };
   })()`);
   check("v1 工程可迁移到 v2", migrated.version === 2, "v" + migrated.version);
-  check("迁移后补充图层数据", Boolean(migrated.layers && Number.isFinite(migrated.layers.x)),
-    JSON.stringify(migrated.layers));
+  check("迁移后补充图层数据", Boolean(migrated.layers && Number.isFinite(migrated.layers.x)), JSON.stringify(migrated.layers));
 
-  // Legacy custom component image becomes a referenced registry entry
   const legacyImage = await page.evaluate(`(() => {
     const canvas = document.createElement("canvas");
     canvas.width = 8; canvas.height = 8;
@@ -448,29 +488,20 @@ suites.project = async () => {
         staminaVisible: true, toolbarVisible: true, captionVisible: true }]
     };
     const result = window.vlogHUD.project.migrate(legacy);
-    return {
-      imageCount: Object.keys(result.images).length,
-      frameImage: result.keyframes[0].images.clock,
-      matches: Boolean(result.images[result.keyframes[0].images.clock])
-    };
+    return { imageCount: Object.keys(result.images).length, frameImage: result.keyframes[0].images.clock,
+      matches: Boolean(result.images[result.keyframes[0].images.clock]) };
   })()`);
-  check("v1 自定义图片进入图片库", legacyImage.imageCount === 1 && legacyImage.matches,
-    JSON.stringify(legacyImage));
+  check("v1 自定义图片进入图片库", legacyImage.imageCount === 1 && legacyImage.matches, JSON.stringify(legacyImage));
 
-  // Reload project through the file input
   await page.evaluate("localStorage.clear()");
   await page.setFileInput("#projectInput", [file]);
-  await page.waitFor("document.querySelector('#projectMeta').textContent.includes('工程 v2')", { label: "工程加载" });
-  await page.waitFor("window.vlogHUD.keyframes.some((f) => f.caption === '工程持久化测试')", { label: "关键帧恢复" });
+  await page.waitFor("window.vlogHUD.keyframes.some((f) => f.caption === '工程持久化测试')", { label: "工程加载" });
   const loaded = await page.evaluate(`(() => ({
     frames: window.vlogHUD.keyframes.length,
-    videoName: document.querySelector("#videoName").textContent,
-    reminderHidden: document.querySelector("#videoReminder").hidden,
-    reminderText: document.querySelector("#videoReminderText").textContent
+    videoName: document.querySelector("#videoName").textContent
   }))()`);
   check("加载工程恢复关键帧", loaded.frames === project.keyframes.length, loaded.frames + " 帧");
 
-  // Loading into a fresh page (no video) must remind the user to re-import
   await reload();
   await page.setFileInput("#projectInput", [file]);
   await page.waitFor("window.vlogHUD.keyframes.length > 1", { label: "工程已加载" });
@@ -478,21 +509,16 @@ suites.project = async () => {
   const reminder = await page.evaluate(`(() => ({
     hidden: document.querySelector("#videoReminder").hidden,
     text: document.querySelector("#videoReminderText").textContent,
-    meta: document.querySelector("#projectMeta").textContent
+    meta: document.querySelector("#projectMeta").textContent,
+    topbar: document.querySelector("#topbarMeta").textContent
   }))()`);
-  check("无视频加载工程时提示重新导入", reminder.hidden === false && reminder.text.includes("重新导入"),
-    reminder.text.slice(0, 60));
+  check("无视频加载工程时提示重新导入", reminder.hidden === false && reminder.text.includes("重新导入"), reminder.text.slice(0, 60));
   check("工程信息显示视频规格", reminder.meta.includes("1920×1080"), reminder.meta);
+  check("顶栏显示当前视频与帧数", /3 帧/.test(reminder.topbar) || /帧/.test(reminder.topbar), reminder.topbar);
 
-  // Autosave (best effort under file://)
   const storage = await page.evaluate(`(() => {
-    try {
-      localStorage.setItem("__probe", "1");
-      localStorage.removeItem("__probe");
-      return true;
-    } catch (error) {
-      return String(error);
-    }
+    try { localStorage.setItem("__probe", "1"); localStorage.removeItem("__probe"); return true; }
+    catch (error) { return String(error); }
   })()`);
   if (storage === true) {
     await page.evaluate(`(() => {
@@ -501,8 +527,7 @@ suites.project = async () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     })()`);
     await page.evaluate("new Promise((r) => setTimeout(r, 1800))");
-    const autosaved = await page.evaluate("Boolean(localStorage.getItem('stardew-vlog-hud.autosave.v2'))");
-    check("自动保存写入 localStorage", autosaved);
+    check("自动保存写入 localStorage", await page.evaluate("Boolean(localStorage.getItem('stardew-vlog-hud.autosave.v2'))"));
 
     await reload({ keepStorage: true });
     const barVisible = await page.evaluate("!document.querySelector('#autosaveBar').hidden");
@@ -510,8 +535,7 @@ suites.project = async () => {
     if (barVisible) {
       await page.click("#autosaveRestore");
       await page.waitFor("window.vlogHUD.keyframes.some((f) => f.tag === '自动保存')", { label: "恢复自动保存" });
-      const hiddenAfter = await page.evaluate("document.querySelector('#autosaveBar').hidden");
-      check("恢复自动保存后隐藏提示条", hiddenAfter === true);
+      check("恢复自动保存后隐藏提示条", (await page.evaluate("document.querySelector('#autosaveBar').hidden")) === true);
     }
   } else {
     console.log("    跳过自动保存断言：localStorage 不可用（" + storage + "）");
@@ -530,16 +554,14 @@ suites.layers = async () => {
   check("图层位置写入关键帧", Math.abs(end.x - 400) < 1 && Math.abs(end.y - 300) < 1, JSON.stringify(end));
 
   const mid = await page.evaluate("window.vlogHUD.layerAtTime(0.6)");
-  const expectedX = (start.x + 400) / 2;
-  check("图层位置按关键帧插值", Math.abs(mid.clock.x - expectedX) < 30,
-    "x=" + Math.round(mid.clock.x) + "（期望约 " + Math.round(expectedX) + "）");
+  check("图层位置按关键帧插值", Math.abs(mid.clock.x - (start.x + 400) / 2) < 30,
+    "x=" + Math.round(mid.clock.x) + "（期望约 " + Math.round((start.x + 400) / 2) + "）");
 
   await page.evaluate("window.vlogHUD.seek(0)");
   const startAgain = await page.evaluate("window.vlogHUD.layers.clock");
   check("回到首帧恢复原图层位置", Math.abs(startAgain.x - start.x) < 1 && Math.abs(startAgain.y - start.y) < 1,
     Math.round(startAgain.x) + "," + Math.round(startAgain.y));
 
-  // Per-keyframe custom image
   const imageId = await page.evaluate(`(() => {
     const canvas = document.createElement("canvas");
     canvas.width = 64; canvas.height = 64;
@@ -553,13 +575,11 @@ suites.layers = async () => {
 
   await page.evaluate("window.vlogHUD.seek(1.2)");
   await waitForIdle();
-  const atOther = await page.evaluate("window.vlogHUD.components.imageId('clock')");
-  check("其他关键帧不受图片影响", atOther !== imageId, String(atOther));
+  check("其他关键帧不受图片影响", (await page.evaluate("window.vlogHUD.components.imageId('clock')")) !== imageId);
 
   const serialized = await page.evaluate("window.vlogHUD.project.serialize()");
   check("工程保存图片库", Boolean(serialized.images[imageId]), Object.keys(serialized.images).join(","));
 
-  // Round trip through a fresh page
   await reload();
   await page.evaluate(`window.vlogHUD.project.load(${JSON.stringify(serialized)})`);
   await page.waitFor("window.vlogHUD.keyframes.length > 0", { label: "工程加载" });
@@ -569,24 +589,18 @@ suites.layers = async () => {
     const id = window.vlogHUD.components.imageId("clock");
     const layer = window.vlogHUD.layers.clock;
     const canvas = document.querySelector("#hudCanvas");
-    const ctx = canvas.getContext("2d");
-    const pixel = ctx.getImageData(Math.round(layer.x + 24), Math.round(layer.y + 24), 1, 1).data;
+    const pixel = canvas.getContext("2d").getImageData(Math.round(layer.x + 24), Math.round(layer.y + 24), 1, 1).data;
     return { id, pixel: [...pixel] };
   })()`);
   check("重新加载工程恢复图层图片", restored.id === imageId, String(restored.id));
   check("图层图片实际绘制到画布", restored.pixel[2] > 180 && restored.pixel[0] < 140, "rgba(" + restored.pixel.join(",") + ")");
 
   const invalid = await page.evaluate(`(() => {
-    try {
-      window.vlogHUD.project.migrate({ format: "something-else" });
-      return "no-error";
-    } catch (error) {
-      return error.message;
-    }
+    try { window.vlogHUD.project.migrate({ format: "something-else" }); return "no-error"; }
+    catch (error) { return error.message; }
   })()`);
   check("拒绝无效工程文件", invalid !== "no-error" && /有效/.test(invalid), invalid);
 
-  // Layer drag creates a keyframe (auto key) at the playhead
   await page.evaluate("window.vlogHUD.seek(0.4)");
   const box = await page.evaluate(`(() => {
     const r = document.querySelector('.component-selection[data-component="clock"]').getBoundingClientRect();
@@ -605,7 +619,7 @@ suites.export = async () => {
   await page.evaluate("window.vlogHUD.seek(0.4)");
   await page.evaluate(`window.vlogHUD.set({ weather: "snow", stamina: 55 })`);
   await page.evaluate("window.vlogHUD.seek(0)");
-  await page.click('[data-editor-tab="export"]');
+  await openExportDialog();
 
   const support = await page.evaluate(`(() => ({
     mp4: MediaRecorder.isTypeSupported("video/mp4;codecs=avc1.42E01E,mp4a.40.2"),
@@ -613,7 +627,6 @@ suites.export = async () => {
   }))()`);
   console.log("    编码支持:", JSON.stringify(support));
 
-  // Cancel path
   await page.click("#exportVideoButton");
   await page.waitFor("window.vlogHUD.exporting === true", { label: "导出开始" });
   await page.click("#cancelExportButton");
@@ -625,9 +638,8 @@ suites.export = async () => {
   }))()`);
   check("导出可取消", /取消/.test(cancelled.status) || /取消/.test(cancelled.log), cancelled.status);
   check("取消后恢复导出按钮", cancelled.buttonEnabled);
-  check("导出日志记录取消", /取消/.test(cancelled.log), cancelled.log.split("\n").slice(-1)[0]?.slice(0, 40));
+  check("导出日志记录取消", /取消/.test(cancelled.log), cancelled.log.split("\\n").slice(-1)[0]?.slice(0, 40));
 
-  // Full export
   await page.click("#exportVideoButton");
   const file = await page.waitForFile(/\.(mp4|webm)$/, { timeout: 120000 });
   if (!ffprobePath) {
@@ -647,15 +659,12 @@ suites.export = async () => {
   check("导出日志包含编码信息", /编码/.test(log), log.split("\n")[1]?.slice(0, 60));
 
   if (ffprobePath) {
-    // Portrait export
     await rm(page.downloadDir, { recursive: true, force: true });
     await mkdir(page.downloadDir, { recursive: true });
-    await page.evaluate(`(() => {
-      const select = document.querySelector("#layoutInput");
-      select.value = "portrait";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    })()`);
+    await page.evaluate("document.querySelector('#exportDialog').close()");
+    await setLayout("portrait");
     await page.evaluate("window.vlogHUD.seek(0)");
+    await openExportDialog();
     await page.click("#exportVideoButton");
     const portraitFile = await page.waitForFile(/\.(mp4|webm)$/, { timeout: 120000 });
     const portraitProbe = await probeVideo(portraitFile);
@@ -663,6 +672,41 @@ suites.export = async () => {
     check("竖屏导出 1080×1920", portraitVideo?.width === 1080 && portraitVideo?.height === 1920,
       portraitVideo?.width + "×" + portraitVideo?.height + " " + portraitVideo?.codec_name);
   }
+};
+
+suites.compact = async () => {
+  await page.send("Emulation.setDeviceMetricsOverride", { width: 1180, height: 760, deviceScaleFactor: 1, mobile: false });
+  await reload();
+  const compact = await page.evaluate(`(() => {
+    const lib = document.querySelector("#libraryPanel").getBoundingClientRect();
+    const stage = document.querySelector("#previewStage").getBoundingClientRect();
+    const insp = document.querySelector("#inspectorPanel").getBoundingClientRect();
+    return {
+      libraryVisible: lib.width > 0,
+      stageRatio: +(stage.width / stage.height).toFixed(3),
+      inspectorWidth: Math.round(insp.width),
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+      toggleVisible: getComputedStyle(document.querySelector("#libraryToggle")).display !== "none"
+    };
+  })()`);
+  check("窄屏仍保持三栏", compact.libraryVisible === true && compact.inspectorWidth >= 280, "inspector=" + compact.inspectorWidth);
+  check("窄屏舞台比例不变", near(compact.stageRatio, 16 / 9, 0.02), String(compact.stageRatio));
+  check("窄屏无横向溢出", compact.overflow <= 1, compact.overflow + "px");
+  check("窄屏素材库常驻显示", compact.toggleVisible === false, "drawer toggle " + (compact.toggleVisible ? "可见" : "隐藏"));
+  await page.screenshot(path.join(shotsDir, "compact.png"));
+  await page.send("Emulation.clearDeviceMetricsOverride");
+
+  await page.send("Emulation.setDeviceMetricsOverride", { width: 1000, height: 760, deviceScaleFactor: 1, mobile: false });
+  await reload();
+  const drawer = await page.evaluate(`(() => ({
+    toggle: getComputedStyle(document.querySelector("#libraryToggle")).display !== "none",
+    libraryOffscreen: document.querySelector("#libraryPanel").getBoundingClientRect().left < 0
+  }))()`);
+  check("窄屏素材库收起为抽屉", drawer.toggle === true && drawer.libraryOffscreen === true);
+  await page.click("#libraryToggle");
+  await waitForIdle();
+  check("抽屉按钮打开素材库", (await page.evaluate("document.body.classList.contains('library-open')")) === true);
+  await page.send("Emulation.clearDeviceMetricsOverride");
 };
 
 async function main() {
@@ -675,7 +719,7 @@ async function main() {
   const browser = await Browser.launch({ headless: !headed });
   page = await browser.newPage({ width: 1500, height: 980 });
   try {
-    const order = ["baseline", "timeline", "autokey", "history", "project", "layers", "export"];
+    const order = ["baseline", "shell", "timeline", "autokey", "history", "project", "layers", "export", "compact"];
     const selected = wanted.length ? order.filter((name) => wanted.includes(name)) : order;
     await reload();
     for (const name of selected) {

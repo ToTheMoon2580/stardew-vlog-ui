@@ -61,9 +61,20 @@ const ctx = canvas.getContext("2d");
 const stage = $("#previewStage");
 const scene = $("#sceneBackground");
 const ui = {
-  editorPanel: $("#editorPanel"),
-  editorTabs: [...document.querySelectorAll(".editor-tab")],
-  editorResize: $("#editorResizeHandle"),
+  inspectorPanel: $("#inspectorPanel"),
+  inspectorTabs: [...document.querySelectorAll(".inspector-tab")],
+  dock: $("#timelineDock"),
+  dockResize: $("#timelineResizeHandle"),
+  library: $("#libraryPanel"),
+  libraryToggle: $("#libraryToggle"),
+  libraryBackdrop: $("#libraryBackdrop"),
+  presetList: $("#presetList"),
+  topbarMeta: $("#topbarMeta"),
+  exportDialog: $("#exportDialog"),
+  exportOpen: $("#exportOpenButton"),
+  exportClose: $("#exportCloseButton"),
+  layoutButtons: [...document.querySelectorAll("[data-layout]")],
+  stageNote: $("#stageNote"),
   selectionLayer: $("#selectionLayer"),
   video: $("#videoPreview"),
   videoInput: $("#videoInput"),
@@ -107,7 +118,6 @@ const ui = {
   autosaveDiscard: $("#autosaveDiscard"),
   undo: $("#undoButton"),
   redo: $("#redoButton"),
-  layout: $("#layoutInput"),
   photo: $("#photoInput"),
   clearPhoto: $("#clearPhotoButton"),
   time: $("#timeInput"),
@@ -129,6 +139,10 @@ const ui = {
   toolbarVisible: $("#toolbarVisibleInput"),
   selectedLayerName: $("#selectedLayerName"),
   layerScale: $("#layerScaleInput"),
+  layerScaleOutput: $("#layerScaleOutput"),
+  frameSummaryState: $("#frameSummaryState"),
+  frameSummaryFrame: $("#frameSummaryFrame"),
+  timelineEmpty: $("#timelineEmpty"),
   resetLayout: $("#resetLayoutButton"),
   clearImage: $("#clearImageButton"),
   componentImage: $("#componentImageInput"),
@@ -139,7 +153,6 @@ const ui = {
   aiKey: $("#aiApiKeyInput"),
   aiGenerate: $("#generateImageButton"),
   aiStatus: $("#aiStatus"),
-  randomPreset: $("#randomPresetButton"),
   copyUrl: $("#copyUrlButton"),
   copyStatus: $("#copyStatus"),
   clean: $("#cleanButton"),
@@ -890,6 +903,7 @@ function renderTimeline() {
     }).join("");
   }
   updatePlayheadMarker();
+  if (ui.timelineEmpty) ui.timelineEmpty.hidden = Boolean(ui.video.src) || keyframes.length > 1;
 }
 
 function updateTimelineMeta(seconds) {
@@ -902,6 +916,7 @@ function updateTimelineMeta(seconds) {
   ui.exportProgress.value = Math.min(playhead, Math.max(0.01, videoDuration()));
   renderTimeline();
   scrollPlayheadIntoView();
+  syncFrameSummary();
 }
 
 function setTimelineZoom(value) {
@@ -1346,9 +1361,9 @@ function drawCaption() {
 
 function drawPlaceholder() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#221122";
-  ctx.font = "24px sans-serif";
-  ctx.fillText("正在加载原版游戏素材...", 80, 100);
+  ctx.fillStyle = "#f4e6c8";
+  ctx.font = "32px 'Microsoft YaHei', sans-serif";
+  ctx.fillText("正在加载原版游戏素材...", 80, 110);
 }
 
 function resizeCanvas() {
@@ -1385,7 +1400,7 @@ function render(shouldSync = true) {
 }
 
 function syncControls() {
-  ui.layout.value = state.layout;
+  syncLayoutButtons();
   if (document.activeElement !== ui.time) ui.time.value = state.time;
   ui.weather.value = state.weather;
   ui.season.value = state.season;
@@ -1405,6 +1420,8 @@ function syncControls() {
   ui.itemPicker.querySelectorAll(".item-choice").forEach((button) => {
     button.classList.toggle("active", button.dataset.item === state.item);
   });
+  syncPresetList();
+  syncFrameSummary();
 }
 
 function syncLayerControls() {
@@ -1414,9 +1431,32 @@ function syncLayerControls() {
   ui.toolbarVisible.checked = state.toolbarVisible;
   ui.captionVisible.checked = state.captionVisible;
   ui.captionVisibleOverlay.checked = state.captionVisible;
-  ui.selectedLayerName.textContent = "当前图层：" + componentLabel(selectedComponent);
-  ui.layerScale.value = String(Math.round((componentLayout[selectedComponent]?.scale ?? 1) * 100));
+  ui.selectedLayerName.textContent = componentLabel(selectedComponent);
+  const scalePercent = Math.round((componentLayout[selectedComponent]?.scale ?? 1) * 100);
+  ui.layerScale.value = String(scalePercent);
+  ui.layerScaleOutput.textContent = scalePercent + "%";
   ui.clearImage.disabled = !(selectedComponent === "item" ? customItemData[state.item] : componentImageIds[selectedComponent]);
+}
+
+function syncLayoutButtons() {
+  ui.layoutButtons.forEach((button) => {
+    const active = button.dataset.layout === state.layout;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const size = canvasSizeFor(state.layout);
+  ui.stageNote.textContent = size.width + " × " + size.height;
+}
+
+function syncFrameSummary() {
+  if (!ui.frameSummaryState) return;
+  const weekday = WEEKDAYS[(clampInt(state.day, 1, 28, 1) - 1) % 7];
+  const weather = WEATHERS[state.weather]?.label || "";
+  const summary = weekday + " " + state.day + "日 · " + seasonLabel(state.season) + " · " + weather + " · " + formatGameClock(state.time);
+  ui.frameSummaryState.textContent = summary;
+  ui.frameSummaryState.title = summary;
+  const onFrame = findFrameIndexAt(playhead) >= 0;
+  ui.frameSummaryFrame.textContent = (onFrame ? "关键帧 " : "播放头 ") + formatTimelineTime(playhead);
 }
 
 let selectionSignature = "";
@@ -1455,17 +1495,17 @@ function updateSelectionBoxes(force = false) {
   }).join("");
 }
 
-function setEditorTab(tab) {
-  ui.editorPanel.dataset.activeTab = tab;
-  document.querySelectorAll(".control-section[data-panel]").forEach((section) => {
-    section.classList.toggle("panel-hidden", section.dataset.panel !== tab);
+function setInspectorTab(tab) {
+  ui.inspectorPanel.dataset.activeTab = tab;
+  document.querySelectorAll(".inspector-panel[data-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== tab;
   });
-  ui.editorTabs.forEach((button) => {
-    const active = button.dataset.editorTab === tab;
+  ui.inspectorTabs.forEach((button) => {
+    const active = button.dataset.inspectorTab === tab;
     button.classList.toggle("active", active);
     button.setAttribute("aria-selected", active ? "true" : "false");
   });
-  const scroller = document.querySelector(".editor-scroll");
+  const scroller = document.querySelector(".inspector-scroll");
   if (scroller) scroller.scrollTop = 0;
 }
 
@@ -1491,6 +1531,21 @@ function populateControls() {
     if (!button) return;
     state.item = button.dataset.item;
     commitLiveState("选择物品");
+  });
+  ui.presetList.innerHTML = PRESETS.map((preset, index) =>
+    '<button class="preset-chip" type="button" role="listitem" data-preset="' + index + '">' +
+    escapeHtml(preset.name) + "<span>" + preset.time + " · " + seasonLabel(preset.season) + "</span></button>"
+  ).join("");
+}
+
+function seasonLabel(season) {
+  return { spring: "春", summer: "夏", fall: "秋", winter: "冬" }[season] || "";
+}
+
+function syncPresetList() {
+  ui.presetList.querySelectorAll(".preset-chip").forEach((button) => {
+    const preset = PRESETS[Number(button.dataset.preset)];
+    button.classList.toggle("active", Boolean(preset) && preset.caption === state.caption && preset.tag === state.tag);
   });
 }
 
@@ -1565,7 +1620,25 @@ function showToast(message) {
 
 function setClean(clean) {
   state.clean = clean;
+  if (clean) closeExportDialog();
   render();
+}
+
+function setLibraryOpen(open) {
+  document.body.classList.toggle("library-open", Boolean(open));
+  if (ui.libraryToggle) ui.libraryToggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function openExportDialog() {
+  updateProjectMeta();
+  if (ui.exportDialog && !ui.exportDialog.open) {
+    if (typeof ui.exportDialog.showModal === "function") ui.exportDialog.showModal();
+    else ui.exportDialog.setAttribute("open", "");
+  }
+}
+
+function closeExportDialog() {
+  if (ui.exportDialog?.open) ui.exportDialog.close();
 }
 
 function currentTools() {
@@ -1907,6 +1980,11 @@ function updateProjectMeta() {
     : "未导入视频";
   const suffix = reference === expectedVideo && !videoMeta ? "（待重新导入）" : "";
   ui.projectMeta.textContent = "工程 v" + PROJECT_VERSION + " · " + keyframes.length + " 个关键帧 · 视频：" + video + suffix;
+  if (ui.topbarMeta) {
+    ui.topbarMeta.textContent = reference
+      ? reference.name + " · " + formatTimelineTime(reference.duration) + (videoMeta ? "" : " · 待导入") + " · " + keyframes.length + " 帧"
+      : "未导入视频 · " + keyframes.length + " 个关键帧";
+  }
 }
 
 function scheduleAutosave() {
@@ -2044,7 +2122,7 @@ function bindSelectionInteractions() {
     if (!box) return;
     const name = box.dataset.component;
     selectedComponent = name;
-    setEditorTab(name === "caption" ? "caption" : name === "toolbar" ? "assets" : "scene");
+    setInspectorTab(name === "caption" ? "caption" : "layers");
     syncLayerControls();
     updateSelectionBoxes(true);
     const layout = componentLayout[name];
@@ -2174,6 +2252,7 @@ function finishExportSession() {
   ui.exportVideo.disabled = false;
   ui.play.disabled = false;
   ui.cancelExport.disabled = true;
+  if (ui.exportClose) ui.exportClose.disabled = false;
 }
 
 function cancelExport() {
@@ -2221,6 +2300,7 @@ async function exportVideo() {
   ui.exportVideo.disabled = true;
   ui.play.disabled = true;
   ui.cancelExport.disabled = false;
+  if (ui.exportClose) ui.exportClose.disabled = true;
   ui.exportProgress.value = 0;
   ui.exportLog.innerHTML = "";
   exportLog("开始导出：" + (videoMeta?.name || "未命名视频") + " · " + formatTimelineTime(videoDuration()) +
@@ -2377,28 +2457,33 @@ async function exportVideo() {
 /* Bindings                                                            */
 /* ------------------------------------------------------------------ */
 
-function bindEditorResize() {
-  let editorResize = null;
-  ui.editorResize.addEventListener("pointerdown", (event) => {
-    const currentHeight = ui.editorPanel.getBoundingClientRect().height;
-    editorResize = { startY: event.clientY, startHeight: currentHeight };
-    ui.editorResize.setPointerCapture(event.pointerId);
-    document.body.classList.add("resizing-editor");
+function bindDockResize() {
+  let dockDrag = null;
+  ui.dockResize.addEventListener("pointerdown", (event) => {
+    dockDrag = { startY: event.clientY, startHeight: ui.dock.getBoundingClientRect().height };
+    ui.dockResize.setPointerCapture(event.pointerId);
+    document.body.classList.add("resizing-dock");
     event.preventDefault();
   });
-  ui.editorResize.addEventListener("pointermove", (event) => {
-    if (!editorResize) return;
-    const nextHeight = Math.max(220, Math.min(window.innerHeight - 260, editorResize.startHeight - (event.clientY - editorResize.startY)));
-    document.body.style.setProperty("--editor-height", nextHeight + "px");
+  ui.dockResize.addEventListener("pointermove", (event) => {
+    if (!dockDrag) return;
+    const nextHeight = clamp(
+      dockDrag.startHeight - (event.clientY - dockDrag.startY),
+      132,
+      Math.min(window.innerHeight - 240, 460)
+    );
+    document.documentElement.style.setProperty("--timeline-height", nextHeight + "px");
+    timelineCache.rulerKey = "";
+    renderTimeline();
     updateSelectionBoxes(true);
   });
-  const finishEditorResize = () => {
-    editorResize = null;
-    document.body.classList.remove("resizing-editor");
+  const finishDockResize = () => {
+    dockDrag = null;
+    document.body.classList.remove("resizing-dock");
     updateSelectionBoxes(true);
   };
-  ui.editorResize.addEventListener("pointerup", finishEditorResize);
-  ui.editorResize.addEventListener("pointercancel", finishEditorResize);
+  ui.dockResize.addEventListener("pointerup", finishDockResize);
+  ui.dockResize.addEventListener("pointercancel", finishDockResize);
 }
 
 function bindKeyboard() {
@@ -2429,6 +2514,14 @@ function bindKeyboard() {
       event.preventDefault();
       if (isExporting) {
         cancelExport();
+        return;
+      }
+      if (ui.exportDialog?.open) {
+        closeExportDialog();
+        return;
+      }
+      if (document.body.classList.contains("library-open")) {
+        setLibraryOpen(false);
         return;
       }
       setClean(!state.clean);
@@ -2472,16 +2565,44 @@ function bindKeyboard() {
 }
 
 function bindControls() {
-  ui.editorTabs.forEach((button) => {
-    button.addEventListener("click", () => setEditorTab(button.dataset.editorTab));
+  ui.inspectorTabs.forEach((button) => {
+    button.addEventListener("click", () => setInspectorTab(button.dataset.inspectorTab));
   });
   bindSelectionInteractions();
   bindTimeline();
-  bindEditorResize();
+  bindDockResize();
   bindKeyboard();
+
+  ui.layoutButtons.forEach((button) => {
+    button.addEventListener("click", () => changeOrientation(button.dataset.layout));
+  });
 
   ui.undo.addEventListener("click", undo);
   ui.redo.addEventListener("click", redo);
+
+  ui.exportOpen.addEventListener("click", openExportDialog);
+  ui.exportClose.addEventListener("click", closeExportDialog);
+  ui.exportDialog.addEventListener("click", (event) => {
+    if (event.target === ui.exportDialog && !isExporting) closeExportDialog();
+  });
+  ui.exportDialog.addEventListener("cancel", (event) => {
+    if (isExporting) {
+      event.preventDefault();
+      cancelExport();
+    }
+  });
+
+  ui.libraryToggle.addEventListener("click", () => setLibraryOpen(!document.body.classList.contains("library-open")));
+  ui.libraryBackdrop.addEventListener("click", () => setLibraryOpen(false));
+
+  ui.presetList.addEventListener("click", (event) => {
+    const button = event.target.closest(".preset-chip");
+    if (!button) return;
+    const preset = PRESETS[Number(button.dataset.preset)];
+    if (!preset) return;
+    applyPreset(preset);
+    setInspectorTab("scene");
+  });
 
   ui.layerScale.addEventListener("pointerdown", () => beginGesture("缩放图层"));
   ui.layerScale.addEventListener("input", () => {
@@ -2586,8 +2707,6 @@ function bindControls() {
     render();
   });
 
-  ui.layout.addEventListener("change", () => changeOrientation(ui.layout.value));
-
   ui.video.addEventListener("ended", () => {
     ui.play.textContent = "▶";
   });
@@ -2633,11 +2752,6 @@ function bindControls() {
     scene.style.removeProperty("--photo");
     scene.classList.remove("has-photo");
     ui.photo.value = "";
-  });
-
-  ui.randomPreset.addEventListener("click", () => {
-    const current = PRESETS.findIndex((preset) => preset.caption === state.caption);
-    applyPreset(PRESETS[(current + 1) % PRESETS.length]);
   });
 
   ui.clean.addEventListener("click", () => {
@@ -2699,7 +2813,7 @@ async function init() {
   parseQuery();
   resetComponentLayout(state.layout);
   bindControls();
-  setEditorTab("video");
+  setInspectorTab("scene");
   await loadAssets();
   resetTimeline();
   syncControls();

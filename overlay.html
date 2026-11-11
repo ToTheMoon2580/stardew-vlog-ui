@@ -3,281 +3,360 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="light" />
+  <meta name="color-scheme" content="dark" />
   <link rel="icon" href="data:," />
-  <title>星露谷原版 HUD · Vlog 叠层</title>
+  <title>谷风生活录 · 星露谷 HUD 剪辑台</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <main id="previewStage" class="preview-stage" aria-label="星露谷原版 HUD 预览">
-    <video id="videoPreview" class="video-preview" playsinline preload="metadata" hidden></video>
-    <div id="sceneBackground" class="scene-background" aria-hidden="true">
-      <div class="scene-sky"></div>
-      <div class="scene-sun"></div>
-      <div class="scene-hills"></div>
-      <div class="scene-road"></div>
-      <div class="scene-grid"></div>
-      <div class="scene-hint">放入你的 Vlog 画面</div>
-    </div>
-    <canvas id="hudCanvas" width="1920" height="1080" aria-label="透明 HUD 叠层"></canvas>
-    <div id="selectionLayer" class="selection-layer" aria-label="HUD 图层定位"></div>
-  </main>
-
-  <div id="editorResizeHandle" class="editor-resize-handle" title="上下拖动调整编辑器高度"></div>
-
-  <aside id="editorPanel" class="editor-panel" data-active-tab="video">
-    <header class="editor-header">
-      <div>
-        <div class="eyebrow">STARDEW VALLEY · LOCAL UI</div>
-        <h1>谷风生活录</h1>
-        <p>直接使用 Steam 游戏内的原版素材</p>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 16 16" width="18" height="18" shape-rendering="crispEdges">
+            <path d="M3 2h4v1h1v4H7v1H3V7H2V3h1z" fill="#e9c169"/>
+            <path d="M9 8h4v1h1v4h-1v1h-4v-1h-1V9h1z" fill="#8fae61"/>
+            <path d="M7 7h2v2H7z" fill="#f6e8c6"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <strong>谷风生活录</strong>
+          <small>星露谷 HUD · 本地剪辑台</small>
+        </span>
       </div>
-      <div class="header-actions">
-        <button id="undoButton" class="pixel-button ghost" type="button" title="撤销 (Ctrl+Z)" disabled>↶ 撤销</button>
-        <button id="redoButton" class="pixel-button ghost" type="button" title="重做 (Ctrl+Shift+Z)" disabled>↷ 重做</button>
-        <button id="cleanButton" class="pixel-button" type="button">透明画面</button>
+      <div id="topbarMeta" class="topbar-meta">未导入视频</div>
+      <div class="topbar-actions">
+        <button id="undoButton" class="icon-button" type="button" title="撤销 (Ctrl+Z)" disabled aria-label="撤销">↶</button>
+        <button id="redoButton" class="icon-button" type="button" title="重做 (Ctrl+Shift+Z)" disabled aria-label="重做">↷</button>
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <button id="libraryToggle" class="icon-button library-toggle" type="button" title="素材库" aria-label="素材库">▤</button>
+        <button id="cleanButton" class="btn btn-ghost" type="button">透明画面</button>
+        <button id="exportOpenButton" class="btn btn-primary" type="button">导出成片</button>
       </div>
     </header>
 
     <div id="autosaveBar" class="autosave-bar" hidden>
       <span id="autosaveText">发现自动保存</span>
       <span class="autosave-actions">
-        <button id="autosaveRestore" class="text-button" type="button">恢复</button>
-        <button id="autosaveDiscard" class="text-button" type="button">忽略</button>
+        <button id="autosaveRestore" class="link-button" type="button">恢复</button>
+        <button id="autosaveDiscard" class="link-button" type="button">忽略</button>
       </span>
     </div>
 
-    <nav class="editor-tabs" role="tablist" aria-label="编辑器功能">
-      <button class="editor-tab active" type="button" data-editor-tab="video">剪辑</button>
-      <button class="editor-tab" type="button" data-editor-tab="scene">画面</button>
-      <button class="editor-tab" type="button" data-editor-tab="caption">字幕</button>
-      <button class="editor-tab" type="button" data-editor-tab="layers">图层</button>
-      <button class="editor-tab" type="button" data-editor-tab="assets">工具栏</button>
-      <button class="editor-tab" type="button" data-editor-tab="ai">AI 生图</button>
-      <button class="editor-tab" type="button" data-editor-tab="export">导出</button>
-    </nav>
-
-    <div class="editor-scroll">
-      <section class="control-section timeline-section" data-panel="video">
-        <h2>时间轴</h2>
-        <div class="timeline-block">
-          <div class="timeline-tools">
-            <button id="timelineZoomOut" class="mini-button" type="button" title="时间轴缩小">−</button>
-            <button id="timelineZoomIn" class="mini-button" type="button" title="时间轴放大">＋</button>
-            <button id="timelineFitButton" class="mini-button" type="button" title="时间轴适应窗口">适应</button>
-            <span id="timelineZoomLabel" class="timeline-zoom">100%</span>
-            <label class="mini-check" title="拖动时吸附到其他关键帧和播放头">
-              <input id="snapInput" type="checkbox" checked /> 吸附
+    <main class="workspace">
+      <aside id="libraryPanel" class="library" aria-label="素材库">
+        <div class="panel-head">
+          <h2>素材库</h2>
+          <span class="panel-hint">LIBRARY</span>
+        </div>
+        <div class="library-scroll">
+          <section class="block">
+            <h3 class="block-title">视频</h3>
+            <label class="dropzone">
+              <input id="videoInput" type="file" accept="video/*" />
+              <span class="dropzone-plus" aria-hidden="true">＋</span>
+              <strong>导入本地视频</strong>
+              <small>MP4 / MOV / WebM</small>
             </label>
-            <label class="mini-check" title="不在关键帧上时，修改会自动记录为关键帧">
-              <input id="autoKeyInput" type="checkbox" checked /> 自动关键帧
-            </label>
-          </div>
-          <div id="timelineScroller" class="timeline-scroller">
-            <div id="timelineTrack" class="timeline-track">
-              <div id="timelineInner" class="timeline-inner">
-                <div id="timelineRuler" class="timeline-ruler"></div>
-                <div id="timelineLane" class="timeline-lane">
-                  <div id="keyframeMarkers" class="keyframe-markers" aria-label="关键帧"></div>
-                </div>
-                <div id="timelinePlayhead" class="timeline-playhead" aria-hidden="true"><i></i></div>
-              </div>
+            <div id="videoName" class="file-line">尚未导入视频</div>
+            <div id="videoReminder" class="notice" hidden>
+              <p id="videoReminderText"></p>
+              <button id="reimportVideoButton" class="link-button" type="button">重新导入匹配视频</button>
             </div>
-          </div>
-          <div class="timeline-meta">
-            <span id="currentTimeLabel">00:00.00</span>
-            <span id="keyframeCount">0 个关键帧</span>
-            <span id="durationLabel">00:00.00</span>
-          </div>
-        </div>
-        <div class="timeline-footer">
-          <p class="workflow-tip">拖动播放头定位；菱形可左右拖动改时间；双击时间轴空白处新增关键帧。</p>
-          <div class="timeline-footer-actions">
-            <button id="deleteKeyframeButton" class="text-button" type="button">删除所选关键帧</button>
-            <label class="checkbox-label compact">
-              <input id="smoothInput" type="checkbox" checked />
-              平滑时间/体力/图层
-            </label>
-          </div>
-        </div>
-      </section>
+          </section>
 
-      <section class="control-section video-controls" data-panel="video">
-        <h2>视频与关键帧</h2>
-        <label class="video-load">导入本地视频
-          <input id="videoInput" type="file" accept="video/*" />
-          <span class="file-button">选择 MP4 / MOV / WebM</span>
-        </label>
-        <div id="videoName" class="video-name">尚未导入视频</div>
-        <div id="videoReminder" class="video-reminder" hidden>
-          <p id="videoReminderText"></p>
-          <button id="reimportVideoButton" class="text-button" type="button">重新导入匹配视频</button>
-        </div>
-        <div class="transport-row">
-          <button id="playButton" class="square-button" type="button" title="播放或暂停 (空格)">▶</button>
-          <button id="backButton" class="square-button" type="button" title="后退 0.1 秒 (←)">−</button>
-          <button id="forwardButton" class="square-button" type="button" title="前进 0.1 秒 (→)">＋</button>
-          <button id="addKeyframeButton" class="pixel-button keyframe-button" type="button" title="在当前时间添加关键帧 (K)">◆ 添加关键帧</button>
-        </div>
-        <p class="workflow-tip">快捷键：空格播放、← → 微调、K 加关键帧、Ctrl+Z 撤销。</p>
-      </section>
-
-      <section class="control-section frame-section" data-panel="video">
-        <h2>画幅与背景</h2>
-        <div class="field-grid two">
-          <label>画幅
-            <select id="layoutInput">
-              <option value="landscape">横屏 16:9</option>
-              <option value="portrait">竖屏 9:16</option>
-            </select>
-          </label>
-          <label>照片
-            <span class="file-field">
+          <section class="block">
+            <h3 class="block-title">背景照片</h3>
+            <label class="dropzone is-compact">
               <input id="photoInput" type="file" accept="image/*" />
-              <span class="file-button">选择本地照片</span>
-            </span>
-          </label>
-        </div>
-        <button id="clearPhotoButton" class="text-button" type="button">恢复示例背景</button>
-      </section>
-
-      <section class="control-section clock-section" data-panel="scene">
-        <h2>时钟与天气</h2>
-        <div class="field-grid two">
-          <label>时间
-            <input id="timeInput" type="time" value="08:30" />
-          </label>
-          <label>天气
-            <select id="weatherInput"></select>
-          </label>
-        </div>
-        <div class="field-grid three">
-          <label>季节
-            <select id="seasonInput">
-              <option value="spring">春</option>
-              <option value="summer">夏</option>
-              <option value="fall">秋</option>
-              <option value="winter">冬</option>
-            </select>
-          </label>
-          <label>日期
-            <input id="dayInput" type="number" min="1" max="28" value="12" />
-          </label>
-          <label>金币
-            <input id="moneyInput" type="number" min="0" max="9999999" step="10" value="860" />
-          </label>
-        </div>
-      </section>
-
-      <section class="control-section stamina-section" data-panel="scene">
-        <h2>体力</h2>
-        <label class="range-label">体力数值 <output id="staminaOutput">100</output>
-          <input id="staminaInput" type="range" min="0" max="100" step="1" value="100" />
-        </label>
-      </section>
-
-      <section class="control-section toolbar-section" data-panel="assets">
-        <h2>工具栏</h2>
-        <label>工具组
-          <select id="groupInput"></select>
-        </label>
-        <div id="itemPicker" class="item-picker" aria-label="选择当前手持物"></div>
-        <div class="selected-item-line">当前：<strong id="selectedItemName">手机</strong></div>
-      </section>
-
-      <section class="control-section caption-section" data-panel="caption">
-        <h2>状态字幕</h2>
-        <div class="field-grid two">
-          <label>小标题
-            <input id="tagInput" type="text" maxlength="10" value="准备出发" />
-          </label>
-          <label class="checkbox-label">
-            <input id="captionVisibleInput" type="checkbox" checked />
-            显示字幕
-          </label>
-        </div>
-        <label>当前状态
-          <textarea id="captionInput" rows="2" maxlength="42">收拾完毕，准备出门上班</textarea>
-        </label>
-        <button id="randomPresetButton" class="text-button" type="button">换一个游戏内状态</button>
-      </section>
-
-      <section class="control-section layers-section" data-panel="layers">
-        <h2>显示、位置与图片</h2>
-        <div class="layer-list">
-          <label><input id="clockVisibleInput" type="checkbox" checked /> 时钟</label>
-          <label><input id="staminaVisibleInput" type="checkbox" checked /> 体力</label>
-          <label><input id="toolbarVisibleInput" type="checkbox" checked /> 工具栏</label>
-          <label><input id="captionVisibleInputOverlay" type="checkbox" checked /> 信息卡</label>
-        </div>
-        <p class="workflow-tip">在预览中拖动组件移动位置；拖动右下角方块缩放。位置、缩放与替换的图片都会记录进当前时间的关键帧。</p>
-        <div class="field-grid two">
-          <label>当前图层大小
-            <input id="layerScaleInput" type="range" min="50" max="200" value="100" />
-          </label>
-          <div class="layer-actions">
-            <button id="resetLayoutButton" class="text-button" type="button">恢复原版位置</button>
-            <button id="clearImageButton" class="text-button" type="button">恢复默认图片</button>
-            <label class="file-button compact-file">替换图片
-              <input id="componentImageInput" type="file" accept="image/png,image/webp,image/jpeg" />
+              <span class="dropzone-plus" aria-hidden="true">＋</span>
+              <strong>选择本地照片</strong>
+              <small>用来检查 HUD 是否遮挡人物</small>
             </label>
-            <label class="file-button compact-file">替换当前物品
-              <input id="itemImageInput" type="file" accept="image/png,image/webp,image/jpeg" />
+            <button id="clearPhotoButton" class="link-button" type="button">恢复示例背景</button>
+          </section>
+
+          <section class="block">
+            <h3 class="block-title">工具栏与道具</h3>
+            <label class="field">
+              <span>工具组</span>
+              <select id="groupInput"></select>
             </label>
+            <div id="itemPicker" class="item-picker" aria-label="选择当前手持物"></div>
+            <p class="file-line">当前：<strong id="selectedItemName">手机</strong></p>
+          </section>
+
+          <section class="block">
+            <h3 class="block-title">快捷键</h3>
+            <dl class="shortcut-list">
+              <dt>空格</dt>
+              <dd>播放 / 暂停</dd>
+              <dt>K</dt>
+              <dd>添加关键帧</dd>
+              <dt>← →</dt>
+              <dd>微调 0.1 秒</dd>
+              <dt>Ctrl+Z</dt>
+              <dd>撤销</dd>
+            </dl>
+          </section>
+        </div>
+      </aside>
+
+      <section class="stage-column">
+        <div class="stage-strip">
+          <div class="segmented" role="group" aria-label="画幅">
+            <button type="button" class="segment active" data-layout="landscape">横屏 16:9</button>
+            <button type="button" class="segment" data-layout="portrait">竖屏 9:16</button>
+          </div>
+          <span id="stageNote" class="stage-note">1920 × 1080</span>
+        </div>
+
+        <div class="stage-viewport">
+          <main id="previewStage" class="preview-stage" aria-label="星露谷原版 HUD 预览">
+            <video id="videoPreview" class="video-preview" playsinline preload="metadata" hidden></video>
+            <div id="sceneBackground" class="scene-background" aria-hidden="true">
+              <div class="scene-sky"></div>
+              <div class="scene-sun"></div>
+              <div class="scene-hills"></div>
+              <div class="scene-road"></div>
+              <div class="scene-grid"></div>
+              <div class="scene-hint">放入你的 Vlog 画面</div>
+            </div>
+            <canvas id="hudCanvas" width="1920" height="1080" aria-label="透明 HUD 叠层"></canvas>
+            <div id="selectionLayer" class="selection-layer" aria-label="HUD 图层定位"></div>
+          </main>
+        </div>
+
+        <div class="transport">
+          <button id="backButton" class="transport-button" type="button" title="后退 0.1 秒 (←)" aria-label="后退 0.1 秒">◁</button>
+          <button id="playButton" class="transport-play" type="button" title="播放或暂停 (空格)" aria-label="播放">▶</button>
+          <button id="forwardButton" class="transport-button" type="button" title="前进 0.1 秒 (→)" aria-label="前进 0.1 秒">▷</button>
+          <div class="timecode">
+            <span id="currentTimeLabel">00:00.00</span>
+            <span class="timecode-sep">/</span>
+            <span id="durationLabel" class="timecode-total">00:00.00</span>
+          </div>
+          <button id="addKeyframeButton" class="btn btn-ghost keyframe-cta" type="button" title="在当前时间添加关键帧 (K)">◆ 添加关键帧</button>
+        </div>
+      </section>
+
+      <aside id="inspectorPanel" class="inspector" data-active-tab="scene" aria-label="属性检查器">
+        <nav class="inspector-tabs" role="tablist" aria-label="属性分组">
+          <button class="inspector-tab active" type="button" data-inspector-tab="scene" aria-selected="true">画面</button>
+          <button class="inspector-tab" type="button" data-inspector-tab="caption" aria-selected="false">字幕</button>
+          <button class="inspector-tab" type="button" data-inspector-tab="layers" aria-selected="false">图层</button>
+          <button class="inspector-tab" type="button" data-inspector-tab="ai" aria-selected="false">AI 生图</button>
+        </nav>
+        <div id="frameSummary" class="frame-summary">
+          <span id="frameSummaryState">周五 12日 · 秋 · 晴天 · 上午 8:30</span>
+          <span id="frameSummaryFrame" class="frame-summary-tag">播放头 0:00.00</span>
+        </div>
+        <div class="inspector-scroll">
+          <section class="inspector-panel" data-panel="scene">
+            <div class="panel-head">
+              <h2>时钟与天气</h2>
+              <span class="panel-hint">CLOCK</span>
+            </div>
+            <div class="field-grid two">
+              <label class="field">时间
+                <input id="timeInput" type="time" value="08:30" />
+              </label>
+              <label class="field">天气
+                <select id="weatherInput"></select>
+              </label>
+            </div>
+            <div class="field-grid two">
+              <label class="field">季节
+                <select id="seasonInput">
+                  <option value="spring">春</option>
+                  <option value="summer">夏</option>
+                  <option value="fall">秋</option>
+                  <option value="winter">冬</option>
+                </select>
+              </label>
+              <label class="field">日期
+                <input id="dayInput" type="number" min="1" max="28" value="12" />
+              </label>
+            </div>
+            <label class="field">金币
+              <input id="moneyInput" type="number" min="0" max="9999999" step="10" value="860" />
+            </label>
+            <div class="panel-head sub">
+              <h2>体力</h2>
+              <span class="panel-hint">STAMINA</span>
+            </div>
+            <label class="field range-field">
+              <span>体力数值 <output id="staminaOutput">100</output></span>
+              <input id="staminaInput" type="range" min="0" max="100" step="1" value="100" />
+            </label>
+            <div class="panel-head sub">
+              <h2>场景预设</h2>
+              <span class="panel-hint">PRESETS</span>
+            </div>
+            <div id="presetList" class="preset-list" role="list"></div>
+          </section>
+
+          <section class="inspector-panel" data-panel="caption" hidden>
+            <div class="panel-head">
+              <h2>信息卡字幕</h2>
+              <span class="panel-hint">CAPTION</span>
+            </div>
+            <label class="field">小标题
+              <input id="tagInput" type="text" maxlength="10" value="准备出发" />
+            </label>
+            <label class="field">当前状态
+              <textarea id="captionInput" rows="3" maxlength="42">收拾完毕，准备出门上班</textarea>
+            </label>
+            <label class="check-row">
+              <input id="captionVisibleInput" type="checkbox" checked />
+              <span>显示信息卡</span>
+            </label>
+          </section>
+
+          <section class="inspector-panel" data-panel="layers" hidden>
+            <div class="panel-head">
+              <h2>显示与位置</h2>
+              <span class="panel-hint">LAYERS</span>
+            </div>
+            <div class="layer-list">
+              <label><input id="clockVisibleInput" type="checkbox" checked /> 时钟</label>
+              <label><input id="staminaVisibleInput" type="checkbox" checked /> 体力</label>
+              <label><input id="toolbarVisibleInput" type="checkbox" checked /> 工具栏</label>
+              <label><input id="captionVisibleInputOverlay" type="checkbox" checked /> 信息卡</label>
+            </div>
+            <p class="hint">在预览中拖动组件移动位置，拖右下角方块缩放。位置、缩放和替换的图片都会写进当前时间的关键帧。</p>
+            <label class="field range-field">
+              <span>当前图层大小 <output id="layerScaleOutput">100%</output></span>
+              <input id="layerScaleInput" type="range" min="50" max="200" value="100" />
+            </label>
+            <p class="file-line">当前图层：<strong id="selectedLayerName">时钟</strong></p>
+            <div class="button-stack">
+              <button id="resetLayoutButton" class="btn btn-ghost" type="button">恢复原版位置</button>
+              <button id="clearImageButton" class="btn btn-ghost" type="button">恢复默认图片</button>
+              <label class="btn btn-ghost file-button">替换图片
+                <input id="componentImageInput" type="file" accept="image/png,image/webp,image/jpeg" />
+              </label>
+              <label class="btn btn-ghost file-button">替换当前物品
+                <input id="itemImageInput" type="file" accept="image/png,image/webp,image/jpeg" />
+              </label>
+            </div>
+          </section>
+
+          <section class="inspector-panel" data-panel="ai" hidden>
+            <div class="panel-head">
+              <h2>AI 像素图片</h2>
+              <span class="panel-hint">IMAGES API</span>
+            </div>
+            <label class="field">替换目标
+              <select id="aiTargetInput">
+                <option value="clock">时钟组件</option>
+                <option value="stamina">体力组件</option>
+                <option value="toolbar">工具栏组件</option>
+                <option value="caption">信息卡组件</option>
+                <option value="item">当前物品图标</option>
+              </select>
+            </label>
+            <label class="field">描述
+              <textarea id="aiPromptInput" rows="3">棕色木质像素游戏界面，清晰描边，暖色，无文字，透明背景</textarea>
+            </label>
+            <div class="field-grid two">
+              <label class="field">模型
+                <input id="aiModelInput" type="text" value="gpt-image-2.5-flare" />
+              </label>
+              <label class="field">API Key
+                <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="只在本次页面使用" />
+              </label>
+            </div>
+            <button id="generateImageButton" class="btn btn-primary wide" type="button">生成并替换图片</button>
+            <p id="aiStatus" class="hint">AI 生图需要通过 start-overlay.cmd 启动本地代理；密钥不写入工程。</p>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <section id="timelineDock" class="timeline-dock" aria-label="时间轴">
+      <div id="timelineResizeHandle" class="dock-resizer" title="上下拖动调整时间轴高度"></div>
+      <div class="dock-toolbar">
+        <div class="dock-title">时间轴</div>
+        <button id="deleteKeyframeButton" class="dock-button" type="button" title="删除所选关键帧 (Delete)">删除关键帧</button>
+        <label class="dock-check" title="拖动时吸附到其他关键帧和播放头">
+          <input id="snapInput" type="checkbox" checked /> 吸附
+        </label>
+        <label class="dock-check" title="不在关键帧上时，修改会自动记录为关键帧">
+          <input id="autoKeyInput" type="checkbox" checked /> 自动关键帧
+        </label>
+        <label class="dock-check" title="在关键帧之间平滑时间、体力、金币和图层">
+          <input id="smoothInput" type="checkbox" checked /> 平滑
+        </label>
+        <span class="dock-spacer"></span>
+        <button id="timelineZoomOut" class="dock-button icon" type="button" title="缩小时间轴">−</button>
+        <span id="timelineZoomLabel" class="zoom-label">100%</span>
+        <button id="timelineZoomIn" class="dock-button icon" type="button" title="放大时间轴">＋</button>
+        <button id="timelineFitButton" class="dock-button" type="button" title="时间轴适应窗口">适应</button>
+      </div>
+      <div id="timelineScroller" class="timeline-scroller">
+        <div id="timelineTrack" class="timeline-track">
+          <div id="timelineInner" class="timeline-inner">
+            <div id="timelineRuler" class="timeline-ruler"></div>
+            <div id="timelineLane" class="timeline-lane">
+              <div id="keyframeMarkers" class="keyframe-markers" aria-label="关键帧"></div>
+              <div id="timelineEmpty" class="timeline-empty" hidden>导入视频后，拖动播放头并添加关键帧</div>
+            </div>
+            <div id="timelinePlayhead" class="timeline-playhead" aria-hidden="true"><i></i></div>
           </div>
         </div>
-        <div id="selectedLayerName" class="selected-item-line">当前图层：时钟</div>
-      </section>
+      </div>
+      <div class="dock-footer">
+        <span id="keyframeCount">0 个关键帧</span>
+        <span class="dock-hint">拖动菱形改时间 · 双击空白处新增关键帧</span>
+      </div>
+    </section>
+  </div>
 
-      <section class="control-section ai-section" data-panel="ai">
-        <h2>AI 像素图片</h2>
-        <label>替换目标
-          <select id="aiTargetInput">
-            <option value="clock">时钟组件</option>
-            <option value="stamina">体力组件</option>
-            <option value="toolbar">工具栏组件</option>
-            <option value="caption">信息卡组件</option>
-            <option value="item">当前物品图标</option>
-          </select>
-        </label>
-        <label>描述
-          <textarea id="aiPromptInput" rows="3">棕色木质像素游戏界面，清晰描边，暖色，无文字，透明背景</textarea>
-        </label>
-        <div class="field-grid two">
-          <label>模型
-            <input id="aiModelInput" type="text" value="gpt-image-2.5-flare" />
-          </label>
-          <label>API Key
-            <input id="aiApiKeyInput" type="password" autocomplete="off" placeholder="只在本次页面使用" />
-          </label>
-        </div>
-        <button id="generateImageButton" class="pixel-button wide" type="button">生成并替换图片</button>
-        <p id="aiStatus" class="copy-status">AI 生成需要通过 start-overlay.cmd 启动本地代理；密钥不写入工程。</p>
-      </section>
+  <div id="libraryBackdrop" class="library-backdrop" aria-hidden="true"></div>
 
-      <section class="control-section export-section" data-panel="export">
-        <h2>导出视频</h2>
-        <div class="export-actions">
-          <button id="exportVideoButton" class="pixel-button wide" type="button">导出当前关键帧动画</button>
-          <button id="cancelExportButton" class="pixel-button danger" type="button" disabled>取消导出</button>
+  <dialog id="exportDialog" class="export-dialog" aria-labelledby="exportTitle">
+    <header class="dialog-head">
+      <div>
+        <div class="panel-hint">EXPORT · MP4</div>
+        <h2 id="exportTitle">导出成片</h2>
+      </div>
+      <button id="exportCloseButton" class="icon-button" type="button" aria-label="关闭导出面板">✕</button>
+    </header>
+    <div class="dialog-body">
+      <p id="projectMeta" class="file-line">工程 v2 · 0 个关键帧 · 视频：未导入视频</p>
+      <div class="export-actions">
+        <button id="exportVideoButton" class="btn btn-primary wide" type="button">导出当前关键帧动画</button>
+        <button id="cancelExportButton" class="btn btn-danger" type="button" disabled>取消</button>
+      </div>
+      <progress id="exportProgress" class="export-progress" max="1" value="0"></progress>
+      <p id="exportStatus" class="hint">优先导出通用 MP4；浏览器不支持时自动改用 WebM。导出是实时录制，耗时约等于视频时长。</p>
+      <ol id="exportLog" class="export-log" aria-label="导出日志"></ol>
+
+      <div class="dialog-section">
+        <div class="panel-head">
+          <h2>工程文件</h2>
+          <span class="panel-hint">PROJECT</span>
         </div>
-        <progress id="exportProgress" class="export-progress" max="1" value="0"></progress>
-        <p id="exportStatus" class="copy-status">优先导出通用 MP4；浏览器不支持时自动改用 WebM。</p>
-        <ol id="exportLog" class="export-log" aria-label="导出日志"></ol>
         <div class="project-row">
-          <button id="saveProjectButton" class="pixel-button" type="button">保存工程</button>
-          <label class="project-load">加载工程
+          <button id="saveProjectButton" class="btn btn-ghost" type="button">保存工程</button>
+          <label class="btn btn-ghost file-button">加载工程
             <input id="projectInput" type="file" accept="application/json,.json" />
           </label>
         </div>
-        <p id="projectMeta" class="copy-status">工程会记录画幅、关键帧、图层位置、自定义图片和视频信息。</p>
-        <h2 class="export-heading">透明叠层</h2>
-        <button id="copyUrlButton" class="pixel-button wide" type="button">复制 OBS 浏览器地址</button>
-        <p id="copyStatus" class="copy-status">透明模式会隐藏编辑器、照片和页面背景。</p>
-        <p class="asset-note">时钟、天气、体力、中文像素字和工具栏全部来自本机游戏文件。</p>
-      </section>
+        <p class="hint">工程会记录画幅、关键帧、图层位置、自定义图片和视频信息，不含原视频文件。</p>
+      </div>
+
+      <div class="dialog-section">
+        <div class="panel-head">
+          <h2>透明叠层</h2>
+          <span class="panel-hint">OBS</span>
+        </div>
+        <button id="copyUrlButton" class="btn btn-ghost wide" type="button">复制 OBS 浏览器地址</button>
+        <p id="copyStatus" class="hint">透明模式会隐藏编辑器、照片和页面背景。</p>
+      </div>
     </div>
-  </aside>
+  </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="vendor/fix-webm-duration.js"></script>
