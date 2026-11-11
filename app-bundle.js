@@ -2920,6 +2920,15 @@ function bindControls() {
     updateSelectionBoxes(true);
     renderTimeline();
   });
+
+  if (typeof ResizeObserver === "function") {
+    const stageObserver = new ResizeObserver(() => {
+      timelineCache.rulerKey = "";
+      updateSelectionBoxes(true);
+      renderTimeline();
+    });
+    stageObserver.observe(stage);
+  }
 }
 
 /* ------------------------------------------------------------------ */

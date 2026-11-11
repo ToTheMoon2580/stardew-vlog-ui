@@ -222,6 +222,7 @@ body.portrait .preview-stage {
 
 .editor-header {
   display: flex;
+  flex: 0 0 auto;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 20px 11px;
@@ -307,6 +308,7 @@ body.portrait .preview-stage {
 
 .autosave-bar {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -379,6 +381,7 @@ body.portrait .preview-stage {
 
 .editor-tabs {
   display: flex;
+  flex: 0 0 auto;
   align-items: stretch;
   gap: 2px;
   height: 42px;
