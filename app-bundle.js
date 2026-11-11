@@ -1228,8 +1228,12 @@ function syncVideoClip() {
   ui.exportVideo.disabled = isExporting;
   if (ui.exportSummary) {
     const size = canvasSizeFor(state.layout);
-    ui.exportSummary.textContent = keyframes.length + " 个关键帧 · " + formatTimelineTime(duration) +
-      " · " + size.width + "×" + size.height;
+    let format = "WebM";
+    if (window.MediaRecorder && typeof MediaRecorder.isTypeSupported === "function") {
+      const type = supportedRecordingType();
+      format = type.startsWith("video/mp4") ? "MP4 · H.264 + AAC" : "WebM（浏览器不支持 MP4）";
+    }
+    ui.exportSummary.textContent = "输出 " + format + " · " + size.width + "×" + size.height + " · " + formatTimelineTime(duration);
   }
 }
 
