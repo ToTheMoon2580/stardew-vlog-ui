@@ -1164,6 +1164,7 @@ function updateTimelineMeta(seconds) {
   ui.exportProgress.max = Math.max(0.01, videoDuration());
   ui.exportProgress.value = Math.min(playhead, Math.max(0.01, videoDuration()));
   renderTimeline();
+  scrollPlayheadIntoView();
 }
 
 function setTimelineZoom(value) {
@@ -1961,7 +1962,6 @@ function startVideoLoop() {
         applyTimelineTime(current);
         updateTimelineMeta(current);
         render(false);
-        scrollPlayheadIntoView();
       }
       ui.play.textContent = ui.video.paused ? "▶" : "Ⅱ";
     }
