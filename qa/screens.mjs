@@ -79,6 +79,13 @@ try {
   await wait(350);
   await page.screenshot(path.join(outDir, prefix + "editor-stickers.png"));
 
+  // 纯画面预览（不拉伸）
+  await page.evaluate("document.querySelector('#cleanButton').click()");
+  await wait(400);
+  await page.screenshot(path.join(outDir, prefix + "clean-preview.png"));
+  await page.pressKey("e");
+  await wait(300);
+
   await page.evaluate(`(() => {
     document.querySelector('[data-layout="landscape"]').click();
     document.querySelector("#exportOpenButton").click();

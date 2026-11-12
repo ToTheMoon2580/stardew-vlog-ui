@@ -1838,7 +1838,76 @@ body.portrait .preview-stage {
   display: none;
 }
 
+/* 纯画面预览（按钮进入，保留视频/照片，居中不拉伸） */
+body.clean-preview {
+  display: block;
+  overflow: hidden;
+  background: #0c0906;
+}
+
+body.clean-preview .topbar,
+body.clean-preview .autosave-bar,
+body.clean-preview .library,
+body.clean-preview .inspector,
+body.clean-preview .timeline-dock,
+body.clean-preview .stage-strip,
+body.clean-preview .transport,
+body.clean-preview .library-backdrop,
+body.clean-preview .toast,
+body.clean-preview .export-dialog {
+  display: none !important;
+}
+
+body.clean-preview .app-shell {
+  height: 100vh;
+}
+
+body.clean-preview .workspace {
+  display: block;
+  height: 100vh;
+  background: #0c0906;
+}
+
+body.clean-preview .stage-column {
+  display: block;
+}
+
+body.clean-preview .stage-viewport {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: radial-gradient(circle at 50% 45%, #1d140c 0%, #090604 82%);
+  container-type: normal;
+}
+
+body.clean-preview .preview-stage {
+  position: relative;
+  inset: auto;
+  width: min(100vw, calc(100vh * 16 / 9));
+  height: auto;
+  max-width: none;
+  max-height: none;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+}
+
+body.clean-preview.portrait .preview-stage {
+  width: min(100vw, calc(100vh * 9 / 16));
+  aspect-ratio: 9 / 16;
+}
+
+body.clean-preview .selection-layer {
+  display: none;
+}
+
+/* OBS 透明模式（?clean=1）：只保留 HUD，页面透明 */
 body.clean {
+  display: block;
+  overflow: hidden;
   background: transparent;
 }
 
@@ -1862,6 +1931,7 @@ body.clean .app-shell {
 body.clean .workspace {
   display: block;
   height: 100vh;
+  background: transparent;
 }
 
 body.clean .stage-column {
@@ -1872,22 +1942,29 @@ body.clean .stage-viewport {
   position: fixed;
   inset: 0;
   z-index: 2;
-  display: block;
+  display: grid;
+  place-items: center;
   padding: 0;
   background: transparent;
   container-type: normal;
 }
 
 body.clean .preview-stage {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
+  position: relative;
+  inset: auto;
+  width: min(100vw, calc(100vh * 16 / 9));
+  height: auto;
   max-width: none;
-  aspect-ratio: auto;
+  max-height: none;
+  aspect-ratio: 16 / 9;
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+body.clean.portrait .preview-stage {
+  width: min(100vw, calc(100vh * 9 / 16));
+  aspect-ratio: 9 / 16;
 }
 
 body.clean .scene-background,

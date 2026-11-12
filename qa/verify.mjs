@@ -295,19 +295,53 @@ suites.shell = async () => {
   await page.evaluate("document.querySelector('#cleanButton').click()");
   await waitForIdle();
   const clean = await page.evaluate(`(() => {
-    const shell = document.querySelector(".app-shell");
+    const stage = document.querySelector("#previewStage").getBoundingClientRect();
+    return {
+      preview: document.body.classList.contains("clean-preview"),
+      chrome: getComputedStyle(document.querySelector(".topbar")).display,
+      stage: [Math.round(stage.width), Math.round(stage.height)],
+      ratio: +(stage.width / stage.height).toFixed(3),
+      fits: stage.width <= window.innerWidth + 1 && stage.height <= window.innerHeight + 1
+    };
+  })()`);
+  check("纯画面隐藏编辑器", clean.preview === true && clean.chrome === "none",
+    "舞台 " + clean.stage.join("×"));
+  check("纯画面保持 16:9 不拉伸", Math.abs(clean.ratio - 16 / 9) < 0.01 && clean.fits,
+    clean.ratio + " · " + clean.stage.join("×"));
+  await page.pressKey("e");
+  await waitForIdle();
+  check("按 E 返回编辑器", (await page.evaluate("document.body.classList.contains('clean-preview')")) === false);
+
+  // 竖屏纯画面也保持比例
+  await page.evaluate("document.querySelector('[data-layout=\"portrait\"]').click()");
+  await page.evaluate("document.querySelector('#cleanButton').click()");
+  await waitForIdle();
+  const portraitClean = await page.evaluate(`(() => {
+    const stage = document.querySelector("#previewStage").getBoundingClientRect();
+    return { ratio: +(stage.width / stage.height).toFixed(3), fits: stage.height <= window.innerHeight + 1 };
+  })()`);
+  check("竖屏纯画面保持 9:16", Math.abs(portraitClean.ratio - 9 / 16) < 0.01 && portraitClean.fits,
+    portraitClean.ratio + "");
+  await page.pressKey("e");
+  await page.evaluate("document.querySelector('[data-layout=\"landscape\"]').click()");
+  await waitForIdle();
+
+  // OBS 透明地址：保留透明底，画幅同样不拉伸
+  await page.goto(pageUrl + "?clean=1");
+  await page.waitFor("window.vlogHUD && window.vlogHUD.ready === true", { label: "OBS 模式加载" });
+  await waitForIdle();
+  const obs = await page.evaluate(`(() => {
     const stage = document.querySelector("#previewStage").getBoundingClientRect();
     return {
       clean: document.body.classList.contains("clean"),
-      shellHidden: getComputedStyle(shell).display === "none",
-      stage: [Math.round(stage.width), Math.round(stage.height)]
+      ratio: +(stage.width / stage.height).toFixed(3),
+      background: getComputedStyle(document.body).backgroundColor,
+      videoHidden: getComputedStyle(document.querySelector("#videoPreview")).display === "none"
     };
   })()`);
-  check("透明画面隐藏编辑器", clean.clean === true && clean.shellHidden === false && clean.stage[0] > 1400,
-    "舞台 " + clean.stage.join("×"));
-  await page.pressKey("e");
-  await waitForIdle();
-  check("按 E 返回编辑器", (await page.evaluate("document.body.classList.contains('clean')")) === false);
+  check("OBS 透明模式保持画幅", obs.clean === true && Math.abs(obs.ratio - 16 / 9) < 0.01, obs.ratio);
+  check("OBS 透明模式不带页面底色", obs.background === "rgba(0, 0, 0, 0)", obs.background);
+  check("OBS 透明模式隐藏视频层", obs.videoHidden === true);
 };
 
 suites.timeline = async () => {
@@ -1095,10 +1129,10 @@ suites.shortcuts = async () => {
 
   await page.pressKey("e");
   await waitForIdle();
-  check("E 进入透明画面", (await page.evaluate("document.body.classList.contains('clean')")) === true);
+  check("E 进入纯画面", (await page.evaluate("document.body.classList.contains('clean-preview')")) === true);
   await page.pressKey("e");
   await waitForIdle();
-  check("E 退出透明画面", (await page.evaluate("document.body.classList.contains('clean')")) === false);
+  check("E 退出纯画面", (await page.evaluate("document.body.classList.contains('clean-preview')")) === false);
 
   // Ctrl+S 触发保存下载
   await page.pressKey("s", { modifiers: 2 });
@@ -1300,6 +1334,34 @@ suites.stickers = async () => {
   check("贴纸在画布上出现选区", added.boxes === 1, String(added.boxes) + " 个选区");
   const canvasAfter = await canvasHash(860, 380, 220, 220);
   check("贴纸绘制到画面", canvasBefore !== canvasAfter, canvasBefore + " → " + canvasAfter);
+
+  // 选中贴纸后点其他组件：应切换选中，不能一直停在贴纸上
+  const clockBox = await page.evaluate(`(() => {
+    const r = document.querySelector('.component-selection[data-component="clock"]').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: clockBox.x, y: clockBox.y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: clockBox.x, y: clockBox.y, button: "left", clickCount: 1 });
+  await waitForIdle();
+  const switched = await page.evaluate(`(() => ({
+    stickerSelected: window.vlogHUD.selectedStickerId,
+    active: [...document.querySelectorAll(".component-selection.active")].map((el) => el.dataset.component || el.dataset.stickerId),
+    stickerActive: Boolean(document.querySelector(".sticker-selection.active")),
+    tab: document.querySelector("#inspectorPanel").dataset.activeTab
+  }))()`);
+  check("选中贴纸后仍能点选其他组件", switched.stickerSelected === null && switched.stickerActive === false &&
+    switched.active.join(",") === "clock" && switched.tab === "layers",
+    JSON.stringify(switched));
+
+  // 重新选中贴纸再拖动
+  const stickerBox = await page.evaluate(`(() => {
+    const r = document.querySelector(".sticker-selection").getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: stickerBox.x, y: stickerBox.y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: stickerBox.x, y: stickerBox.y, button: "left", clickCount: 1 });
+  await waitForIdle();
+  check("重新选中贴纸", (await page.evaluate("Boolean(window.vlogHUD.selectedStickerId)")) === true);
 
   // 拖动画布上的贴纸
   const box = await page.evaluate(`(() => {

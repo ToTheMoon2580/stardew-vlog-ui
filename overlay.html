@@ -34,7 +34,7 @@
           <input id="projectInput" type="file" accept="application/json,.json" />
         </label>
         <button id="saveProjectTopButton" class="btn btn-ghost btn-compact" type="button" title="保存工程 (Ctrl+S)">保存工程</button>
-        <button id="cleanButton" class="btn btn-ghost" type="button">透明画面</button>
+        <button id="cleanButton" class="btn btn-ghost" type="button" title="隐藏编辑器、只看画面；OBS 透明版请用导出里的 OBS 地址">纯画面</button>
         <button id="exportOpenButton" class="btn btn-primary" type="button">导出成片</button>
       </div>
     </header>
@@ -423,7 +423,7 @@
           <span class="panel-hint">OBS</span>
         </div>
         <button id="copyUrlButton" class="btn btn-ghost wide" type="button">复制 OBS 浏览器地址</button>
-        <p id="copyStatus" class="hint">透明模式会隐藏编辑器、照片和页面背景。</p>
+        <p id="copyStatus" class="hint">透明模式会隐藏编辑器、照片和页面背景；直接在浏览器打开时透明处会显示为深色，放进 OBS 才是透明底。</p>
       </div>
     </div>
   </dialog>

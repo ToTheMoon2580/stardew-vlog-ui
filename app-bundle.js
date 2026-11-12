@@ -327,7 +327,8 @@ const state = {
   staminaVisible: true,
   toolbarVisible: true,
   captionVisible: true,
-  clean: false
+  clean: false,
+  cleanPreview: false
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -2291,6 +2292,7 @@ function resizeCanvas() {
 
 function render(shouldSync = true) {
   document.body.classList.toggle("clean", state.clean);
+  document.body.classList.toggle("clean-preview", !state.clean && state.cleanPreview);
   document.body.classList.toggle("portrait", state.layout === "portrait");
   stage.classList.toggle("has-video", Boolean(ui.video.src));
   resizeCanvas();
@@ -2504,7 +2506,7 @@ function updateFromInputs(label = "画面参数") {
 }
 
 function applyPreset(preset) {
-  Object.assign(state, preset, { clean: false });
+  Object.assign(state, preset, { clean: false, cleanPreview: false });
   commitLiveState("应用预设");
 }
 
@@ -2556,9 +2558,41 @@ function showToast(message) {
 }
 
 function setClean(clean) {
-  state.clean = clean;
-  if (clean) closeExportDialog();
+  state.clean = Boolean(clean);
+  if (state.clean) {
+    state.cleanPreview = false;
+    closeExportDialog();
+  }
   render();
+}
+
+function setCleanPreview(on) {
+  state.cleanPreview = Boolean(on);
+  if (state.cleanPreview) {
+    state.clean = false;
+    closeExportDialog();
+  }
+  render();
+}
+
+function isCleanMode() {
+  return state.clean || state.cleanPreview;
+}
+
+function exitCleanMode() {
+  if (!isCleanMode()) return;
+  state.clean = false;
+  state.cleanPreview = false;
+  render();
+}
+
+function enterCleanPreview() {
+  if (state.clean || state.cleanPreview) {
+    exitCleanMode();
+    return;
+  }
+  setCleanPreview(true);
+  showToast("按 E 或 Esc 返回编辑器");
 }
 
 function setLibraryOpen(open) {
@@ -3241,6 +3275,7 @@ function bindSelectionInteractions() {
       return;
     }
     const name = box.dataset.component;
+    selectedStickerId = null;
     selectedComponent = name;
     setInspectorTab(name === "caption" ? "caption" : "layers");
     syncLayerControls();
@@ -3711,11 +3746,12 @@ function bindKeyboard() {
         setLibraryOpen(false);
         return;
       }
-      setClean(!state.clean);
+      exitCleanMode();
       return;
     }
     if (event.key.toLowerCase() === "e") {
-      setClean(!state.clean);
+      if (isCleanMode()) exitCleanMode();
+      else enterCleanPreview();
       return;
     }
     if (event.code === "Space") {
@@ -3999,8 +4035,7 @@ function bindControls() {
   });
 
   ui.clean.addEventListener("click", () => {
-    setClean(true);
-    showToast("按 E 或 Esc 返回编辑器");
+    enterCleanPreview();
   });
 
   ui.copyUrl.addEventListener("click", async () => {
