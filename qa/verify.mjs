@@ -1384,6 +1384,29 @@ suites.stickers = async () => {
   const afterScale = await page.evaluate("window.vlogHUD.stickers[0].scale");
   check("拖把手缩放贴纸", afterScale > beforeScale, beforeScale.toFixed(2) + " → " + afterScale.toFixed(2));
 
+  // 16px 小图块需要放大到几千百分比（旧上限 800% 太小）
+  await page.evaluate(`(() => {
+    const input = document.querySelector("#stickerScaleNumberInput");
+    input.value = "3000";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  const big = await page.evaluate(`(() => ({
+    scale: window.vlogHUD.stickers[0].scale,
+    box: Math.round(document.querySelector(".sticker-selection.active").getBoundingClientRect().width)
+  }))()`);
+  check("贴纸可精确放大到 3000%", big.scale === 30, "scale " + big.scale);
+  check("放大后贴纸选框随之变大", big.box > 300, big.box + "px");
+  await page.evaluate(`(() => {
+    const input = document.querySelector("#stickerScaleNumberInput");
+    input.value = "200";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  check("放大后可再缩回 200%", (await page.evaluate("window.vlogHUD.stickers[0].scale")) === 2);
+
   // 网格分类里再点一个
   await page.evaluate(`(() => {
     const select = document.querySelector("#stickerCategory");

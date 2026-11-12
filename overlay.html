@@ -286,7 +286,10 @@
             </div>
             <label class="field range-field">
               <span>贴纸大小 <output id="stickerScaleOutput">—</output></span>
-              <input id="stickerScaleInput" type="range" min="25" max="800" value="100" />
+              <input id="stickerScaleInput" type="range" min="5" max="5000" step="5" value="100" />
+            </label>
+            <label class="field">精确大小（%）
+              <input id="stickerScaleNumberInput" type="number" min="5" max="5000" step="5" />
             </label>
             <div class="button-stack">
               <button id="stickerUpButton" class="btn btn-ghost" type="button">上移一层</button>
@@ -294,7 +297,7 @@
               <button id="stickerDeleteButton" class="btn btn-ghost" type="button">删除所选贴纸</button>
               <button id="stickerClearButton" class="btn btn-ghost" type="button">清空全部贴纸</button>
             </div>
-            <p class="hint">贴纸会一直显示在整段视频上；拖动画布上的虚线框移动，拖右下角方块缩放。</p>
+            <p class="hint">贴纸会一直显示在整段视频上；拖动画布上的虚线框移动，拖右下角方块缩放，也可以在右侧直接填大小（最大 5000%）。</p>
           </section>
 
           <section class="inspector-panel" data-panel="ai" hidden>

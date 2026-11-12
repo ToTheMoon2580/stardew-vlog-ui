@@ -342,7 +342,7 @@ DOM 结构：
 
 - §kind: "sheet"§：从原版图集按 §sx/sy/sw/sh§ 取一块（§springobjects / Craftables / tools / weapons / BuffsIcons / Objects_2 / menu§）。
 - §kind: "asset"§：整张命名素材（§items:*§ 常用道具、§ui:*§ 界面零件）。
-- §x / y§ 是画布坐标，§scale§ 夹在 0.25–8；默认 16px 图块 4 倍、64px 图块 1 倍、命名素材 2 倍。
+- §x / y§ 是画布坐标，§scale§ 夹在 0.05–50（5%–5000%）；默认 16px 图块 4 倍、64px 图块 1 倍、命名素材 2 倍。检查器里既有滑杆也有“精确大小（%）”输入框，拖右下角把手的缩放是**按比例**的（拖出一个自身宽度约等于 2 倍），否则 16px 小图块永远放不大。
 - 渲染入口 §drawStickers()§，选区在 §updateSelectionBoxes()§ 里追加 §.sticker-selection[data-sticker-id]§。
 - 操作：从素材库点按或拖入画布、拖虚线框移动、拖右下角缩放；检查器“贴纸”页可改 X/Y/大小、上下移层、删除、清空。
 - 删除键在选中贴纸时删贴纸，否则删关键帧；Esc 先取消贴纸选中。

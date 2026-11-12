@@ -40,6 +40,9 @@ const STICKER_ASSET_GROUPS = {
   items: { label: "常用道具", defaultScale: 2 },
   ui: { label: "界面零件", defaultScale: 2 }
 };
+// 16px 的原版图块想放到画面里当主视觉，8 倍（128px）远远不够；上限放到 50 倍（5000%）
+const STICKER_SCALE_MIN = 0.05;
+const STICKER_SCALE_MAX = 50;
 const PROJECT_FORMAT = "stardew-vlog-hud";
 const PROJECT_VERSION = 3;
 const AUTOSAVE_KEY = "stardew-vlog-hud.autosave.v2";
@@ -175,6 +178,7 @@ const ui = {
   stickerX: $("#stickerXInput"),
   stickerY: $("#stickerYInput"),
   stickerScale: $("#stickerScaleInput"),
+  stickerScaleNumber: $("#stickerScaleNumberInput"),
   stickerScaleOutput: $("#stickerScaleOutput"),
   stickerDelete: $("#stickerDeleteButton"),
   stickerClear: $("#stickerClearButton"),
@@ -486,7 +490,7 @@ function normalizeSticker(raw) {
     label: typeof raw.label === "string" && raw.label ? raw.label : "贴纸",
     x: Number(raw.x) || 0,
     y: Number(raw.y) || 0,
-    scale: clamp(Number(raw.scale) || 1, 0.25, 8),
+    scale: clamp(Number(raw.scale) || 1, STICKER_SCALE_MIN, STICKER_SCALE_MAX),
     visible: raw.visible !== false
   };
 }
@@ -859,7 +863,7 @@ function selectedSticker() {
 
 function addSticker(source, x, y) {
   if (!source) return null;
-  const scale = clamp(Number(source.defaultScale) || 4, 0.25, 8);
+  const scale = clamp(Number(source.defaultScale) || 4, STICKER_SCALE_MIN, STICKER_SCALE_MAX);
   const width = source.sw * scale;
   const height = source.sh * scale;
   const sticker = {
@@ -950,6 +954,12 @@ function syncStickerControls() {
     ui.stickerScale.disabled = !sticker;
     ui.stickerScaleOutput.textContent = sticker ? Math.round(sticker.scale * 100) + "%" : "—";
     if (document.activeElement !== ui.stickerScale) ui.stickerScale.value = sticker ? String(Math.round(sticker.scale * 100)) : "100";
+  }
+  if (ui.stickerScaleNumber) {
+    ui.stickerScaleNumber.disabled = !sticker;
+    if (document.activeElement !== ui.stickerScaleNumber) {
+      ui.stickerScaleNumber.value = sticker ? String(Math.round(sticker.scale * 100)) : "";
+    }
   }
   if (ui.stickerDelete) ui.stickerDelete.disabled = !sticker;
   if (ui.stickerUp) ui.stickerUp.disabled = !sticker;
@@ -1093,13 +1103,32 @@ function bindStickerLibrary() {
     const sticker = selectedSticker();
     if (!sticker) return;
     beginGesture("缩放贴纸");
-    sticker.scale = clamp(Number(ui.stickerScale.value) / 100, 0.25, 8);
+    sticker.scale = clamp(Number(ui.stickerScale.value) / 100, STICKER_SCALE_MIN, STICKER_SCALE_MAX);
     touchDocument();
     render();
   });
   const finishStickerScale = () => endGesture();
   ui.stickerScale.addEventListener("change", finishStickerScale);
   ui.stickerScale.addEventListener("pointerup", finishStickerScale);
+
+  // 精确输入：16px 图块放到 3000% 这种大尺寸时，滑杆不够用
+  ui.stickerScaleNumber.addEventListener("pointerdown", () => beginGesture("缩放贴纸"));
+  ui.stickerScaleNumber.addEventListener("input", () => {
+    const sticker = selectedSticker();
+    if (!sticker) return;
+    beginGesture("缩放贴纸");
+    sticker.scale = clamp(Number(ui.stickerScaleNumber.value) / 100, STICKER_SCALE_MIN, STICKER_SCALE_MAX);
+    touchDocument();
+    render();
+  });
+  ui.stickerScaleNumber.addEventListener("change", finishStickerScale);
+  ui.stickerScaleNumber.addEventListener("blur", finishStickerScale);
+  ui.stickerScaleNumber.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      ui.stickerScaleNumber.blur();
+    }
+  });
 }
 
 let stickerDrag = null;
@@ -3044,8 +3073,9 @@ function bindSelectionInteractions() {
       if (resizing) {
         const baseWidth = Math.max(1, sticker.sw * stickerAction.startScale * stickerAction.stageWidth / canvas.width);
         const baseHeight = Math.max(1, sticker.sh * stickerAction.startScale * stickerAction.stageHeight / canvas.height);
-        const delta = (dx / baseWidth + dy / baseHeight) / 2;
-        sticker.scale = clamp(stickerAction.startScale + delta, 0.25, 8);
+        // 按比例缩放：拖出一个自身宽度就是 2 倍，小图块也能几拖就放大到几千百分比
+        const ratio = (dx / baseWidth + dy / baseHeight) / 2;
+        sticker.scale = clamp(stickerAction.startScale * Math.max(0.05, 1 + ratio), STICKER_SCALE_MIN, STICKER_SCALE_MAX);
       } else {
         sticker.x = stickerAction.startStickerX + dx * canvas.width / stickerAction.stageWidth;
         sticker.y = stickerAction.startStickerY + dy * canvas.height / stickerAction.stageHeight;
