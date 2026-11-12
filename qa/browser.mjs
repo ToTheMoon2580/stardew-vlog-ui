@@ -280,4 +280,17 @@ export class Page {
     }
     throw new Error("等待下载超时");
   }
+
+  // 在页面脚本运行前清空 localStorage，避免自动恢复上一次工程影响用例
+  async setClearStorageOnLoad(enabled) {
+    if (enabled && !this.clearScriptId) {
+      const { identifier } = await this.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: "try{localStorage.clear()}catch(e){}"
+      });
+      this.clearScriptId = identifier;
+    } else if (!enabled && this.clearScriptId) {
+      await this.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: this.clearScriptId });
+      this.clearScriptId = null;
+    }
+  }
 }

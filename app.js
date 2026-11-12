@@ -27,8 +27,21 @@ const GAME_TEXT = "#221122";
 const SHADOW = "#dd9454";
 
 const LAYER_NAMES = ["clock", "stamina", "toolbar", "caption"];
+const STICKER_SHEETS = {
+  springobjects: { label: "随手物", cell: 16, defaultScale: 4 },
+  Craftables: { label: "可制作", cell: 16, defaultScale: 4 },
+  tools: { label: "工具", cell: 16, defaultScale: 4 },
+  weapons: { label: "武器", cell: 16, defaultScale: 4 },
+  BuffsIcons: { label: "增益图标", cell: 16, defaultScale: 4 },
+  Objects_2: { label: "物件", cell: 16, defaultScale: 4 },
+  menu: { label: "界面图块", cell: 64, defaultScale: 1 }
+};
+const STICKER_ASSET_GROUPS = {
+  items: { label: "常用道具", defaultScale: 2 },
+  ui: { label: "界面零件", defaultScale: 2 }
+};
 const PROJECT_FORMAT = "stardew-vlog-hud";
-const PROJECT_VERSION = 2;
+const PROJECT_VERSION = 3;
 const AUTOSAVE_KEY = "stardew-vlog-hud.autosave.v2";
 const KEYFRAME_EPSILON = 0.045;
 const HISTORY_LIMIT = 120;
@@ -68,6 +81,8 @@ const ui = {
   library: $("#libraryPanel"),
   libraryToggle: $("#libraryToggle"),
   libraryBackdrop: $("#libraryBackdrop"),
+  libraryTabs: [...document.querySelectorAll("[data-library-tab]")],
+  libraryPanels: [...document.querySelectorAll("[data-library-panel]")],
   presetList: $("#presetList"),
   topbarMeta: $("#topbarMeta"),
   exportDialog: $("#exportDialog"),
@@ -116,6 +131,8 @@ const ui = {
   saveProject: $("#saveProjectButton"),
   saveProjectTop: $("#saveProjectTopButton"),
   projectLoad: $("#projectLoadButton"),
+  newProjectButton: $("#newProjectButton"),
+  autoRestoreInput: $("#autoRestoreInput"),
   projectInput: $("#projectInput"),
   projectMeta: $("#projectMeta"),
   exportSummary: $("#exportSummary"),
@@ -149,6 +166,19 @@ const ui = {
   layerY: $("#layerYInput"),
   layerScale: $("#layerScaleInput"),
   layerScaleOutput: $("#layerScaleOutput"),
+  stickerCategory: $("#stickerCategory"),
+  stickerGrid: $("#stickerGrid"),
+  stickerAssets: $("#stickerAssets"),
+  stickerHint: $("#stickerHint"),
+  stickerList: $("#stickerList"),
+  stickerX: $("#stickerXInput"),
+  stickerY: $("#stickerYInput"),
+  stickerScale: $("#stickerScaleInput"),
+  stickerScaleOutput: $("#stickerScaleOutput"),
+  stickerDelete: $("#stickerDeleteButton"),
+  stickerClear: $("#stickerClearButton"),
+  stickerUp: $("#stickerUpButton"),
+  stickerDown: $("#stickerDownButton"),
   frameSummaryState: $("#frameSummaryState"),
   frameSummaryFrame: $("#frameSummaryFrame"),
   timelineEmpty: $("#timelineEmpty"),
@@ -211,6 +241,13 @@ let docRevision = 0;
 let timelineZoom = 1;
 let fpsProbe = null;
 let ready = false;
+
+let stickers = [];
+let selectedStickerId = null;
+let stickerCategory = "items";
+let stickerCounter = 0;
+const stickerSheetImages = {};
+const stickerAssetImages = {};
 
 const timelineCache = { rulerKey: "", markerKey: "" };
 const autoKeyNotice = { at: -9999, time: -9999 };
@@ -429,6 +466,29 @@ function ensureTimeline() {
   if (!keyframes.length) resetTimeline();
 }
 
+function normalizeSticker(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const kind = raw.kind === "asset" ? "asset" : "sheet";
+  const sheet = typeof raw.sheet === "string" ? raw.sheet : null;
+  const asset = typeof raw.asset === "string" ? raw.asset : null;
+  if (kind === "sheet" && !STICKER_SHEETS[sheet]) return null;
+  if (kind === "asset" && !asset) return null;
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : "st-" + Date.now().toString(36) + "-" + (++stickerCounter).toString(36),
+    kind,
+    sheet,
+    asset,
+    sx: Math.max(0, Number(raw.sx) || 0),
+    sy: Math.max(0, Number(raw.sy) || 0),
+    sw: Math.max(1, Number(raw.sw) || 16),
+    sh: Math.max(1, Number(raw.sh) || 16),
+    label: typeof raw.label === "string" && raw.label ? raw.label : "贴纸",
+    x: Number(raw.x) || 0,
+    y: Number(raw.y) || 0,
+    scale: clamp(Number(raw.scale) || 1, 0.25, 8),
+    visible: raw.visible !== false
+  };
+}
 function resetTimeline() {
   keyframes = [{ at: 0, ...captureLiveFrame() }];
   selectedKeyframeIndex = 0;
@@ -624,6 +684,426 @@ async function loadCustomImage(dataUrl) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Stickers (原版素材贴纸)                                             */
+/* ------------------------------------------------------------------ */
+
+const UI_STICKER_FALLBACK = [
+  "weather-sunny", "weather-rain", "weather-storm", "weather-snow", "weather-wind",
+  "weather-blossom", "weather-green-rain", "weather-festival",
+  "season-spring", "season-summer", "season-fall", "season-winter",
+  "heart", "quest-button", "money-box", "clock-frame", "clock-hand",
+  "toolbar-slot", "toolbar-slot-selected", "toolbar-composed", "stamina-panel-composed",
+  "clock-panel-composed", "caption-composed", "energy-top", "energy-middle", "energy-bottom"
+];
+
+function stickerMenuSource() {
+  return window.STARDEW_ASSETS?.menu || "./assets/stardew/MenuTiles.png";
+}
+
+function stickerSheetSource(name) {
+  return window.STARDEW_ASSETS?.sheets?.[name] || "./assets/stardew/" + name + ".png";
+}
+
+function stickerUiSource(name) {
+  return window.STARDEW_ASSETS?.ui?.[name] || "./assets/ui/" + name + ".png";
+}
+
+async function loadStickerAssets() {
+  for (const item of Object.values(ITEMS)) {
+    if (item.heart) continue;
+    if (itemImages[item.source]) stickerAssetImages["items:" + item.source] = itemImages[item.source];
+  }
+  const tasks = Object.keys(STICKER_SHEETS).map(async (name) => {
+    try {
+      const url = name === "menu" ? stickerMenuSource() : stickerSheetSource(name);
+      stickerSheetImages[name] = await loadImage(url);
+    } catch (error) {
+      console.warn("贴纸图集加载失败", name, error);
+    }
+  });
+  const uiNames = Object.keys(window.STARDEW_ASSETS?.ui || {}).length
+    ? Object.keys(window.STARDEW_ASSETS.ui)
+    : UI_STICKER_FALLBACK;
+  for (const name of uiNames) {
+    tasks.push((async () => {
+      try {
+        stickerAssetImages["ui:" + name] = await loadImage(stickerUiSource(name));
+      } catch (error) {
+        console.warn("贴纸素材加载失败", name, error);
+      }
+    })());
+  }
+  await Promise.all(tasks);
+}
+
+function stickerCategoryLabel(id) {
+  if (STICKER_SHEETS[id]) return STICKER_SHEETS[id].label;
+  if (STICKER_ASSET_GROUPS[id]) return STICKER_ASSET_GROUPS[id].label;
+  return id;
+}
+
+function stickerAssetEntries(group) {
+  if (group === "items") {
+    return Object.entries(ITEMS).filter(([, item]) => !item.heart).map(([key, item]) => ({
+      key: "items:" + item.source,
+      label: item.label,
+      image: itemImages[item.source]
+    })).filter((entry) => entry.image);
+  }
+  const names = Object.keys(stickerAssetImages).filter((key) => key.startsWith("ui:"));
+  return names.map((key) => ({ key, label: key.slice(3), image: stickerAssetImages[key] }));
+}
+
+let stickerGridCells = [];
+
+function stickerGridColumns(cellDisplay) {
+  return Math.max(1, Math.floor(212 / cellDisplay));
+}
+
+function renderStickerBrowser() {
+  if (!ui.stickerGrid) return;
+  const isSheet = Boolean(STICKER_SHEETS[stickerCategory]);
+  ui.stickerGrid.hidden = !isSheet;
+  ui.stickerAssets.hidden = isSheet;
+  if (isSheet) ui.stickerAssets.innerHTML = "";
+  ui.stickerHint.textContent = isSheet
+    ? "点一下加到画面中央，或把它拖进预览"
+    : "点一下加到画面中央，或把它拖进预览";
+  if (isSheet) {
+    const image = stickerSheetImages[stickerCategory];
+    if (!image) return;
+    const cell = STICKER_SHEETS[stickerCategory].cell;
+    const cols = Math.floor(image.width / cell);
+    const rows = Math.floor(image.height / cell);
+    const cellDisplay = stickerCategory === "menu" ? 44 : 28;
+    const columns = stickerGridColumns(cellDisplay);
+    const outCols = Math.min(cols, columns);
+    const totalRows = Math.ceil((cols * rows) / outCols);
+    const canvasEl = ui.stickerGrid;
+    canvasEl.width = outCols * cellDisplay;
+    canvasEl.height = Math.max(cellDisplay, totalRows * cellDisplay);
+    const gridContext = canvasEl.getContext("2d");
+    gridContext.imageSmoothingEnabled = false;
+    gridContext.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    stickerGridCells = [];
+    for (let index = 0; index < cols * rows; index++) {
+      const sourceCol = index % cols;
+      const sourceRow = Math.floor(index / cols);
+      const outCol = index % outCols;
+      const outRow = Math.floor(index / outCols);
+      const dx = outCol * cellDisplay;
+      const dy = outRow * cellDisplay;
+      // 空隙与底纹，让透明像素也看得出格子
+      gridContext.fillStyle = (sourceCol + sourceRow) % 2 === 0 ? "#241a10" : "#1b130c";
+      gridContext.fillRect(dx, dy, cellDisplay, cellDisplay);
+      const pad = Math.max(1, Math.round(cellDisplay * 0.08));
+      gridContext.drawImage(image, sourceCol * cell, sourceRow * cell, cell, cell, dx + pad, dy + pad, cellDisplay - pad * 2, cellDisplay - pad * 2);
+      stickerGridCells.push({ x: dx, y: dy, w: cellDisplay, h: cellDisplay, sourceCol, sourceRow, cell, sheet: stickerCategory });
+    }
+    return;
+  }
+  // 命名素材：按钮网格
+  const entries = stickerAssetEntries(stickerCategory);
+  ui.stickerAssets.innerHTML = entries.map((entry) =>
+    '<button class="sticker-asset" type="button" data-asset="' + escapeHtml(entry.key) + '" title="' + escapeHtml(entry.label) + '">' +
+    '<img src="' + entry.image.src + '" alt="">' +
+    '<span>' + escapeHtml(entry.label) + "</span></button>"
+  ).join("");
+}
+
+function stickerCellAt(clientX, clientY) {
+  const canvasEl = ui.stickerGrid;
+  const rect = canvasEl.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = (clientX - rect.left) * canvasEl.width / rect.width;
+  const y = (clientY - rect.top) * canvasEl.height / rect.height;
+  return stickerGridCells.find((cell) => x >= cell.x && x < cell.x + cell.w && y >= cell.y && y < cell.y + cell.h) || null;
+}
+
+function stickerSourceFromCell(cell) {
+  return {
+    kind: "sheet",
+    sheet: cell.sheet,
+    sx: cell.sourceCol * cell.cell,
+    sy: cell.sourceRow * cell.cell,
+    sw: cell.cell,
+    sh: cell.cell,
+    label: stickerCategoryLabel(cell.sheet) + " " + (cell.sourceRow + 1) + "-" + (cell.sourceCol + 1),
+    defaultScale: STICKER_SHEETS[cell.sheet].defaultScale
+  };
+}
+
+function stickerSourceFromAsset(key) {
+  const image = stickerAssetImages[key];
+  if (!image) return null;
+  const itemKey = key.startsWith("items:") ? key.slice(6) : null;
+  const label = itemKey
+    ? (Object.values(ITEMS).find((item) => item.source === itemKey)?.label || itemKey)
+    : key.slice(3);
+  return {
+    kind: "asset",
+    asset: key,
+    sx: 0,
+    sy: 0,
+    sw: image.width,
+    sh: image.height,
+    label,
+    defaultScale: 2
+  };
+}
+
+function selectedSticker() {
+  return stickers.find((sticker) => sticker.id === selectedStickerId) || null;
+}
+
+function addSticker(source, x, y) {
+  if (!source) return null;
+  const scale = clamp(Number(source.defaultScale) || 4, 0.25, 8);
+  const width = source.sw * scale;
+  const height = source.sh * scale;
+  const sticker = {
+    id: "st-" + Date.now().toString(36) + "-" + (++stickerCounter).toString(36),
+    kind: source.kind,
+    sheet: source.sheet || null,
+    asset: source.asset || null,
+    sx: source.sx || 0,
+    sy: source.sy || 0,
+    sw: source.sw,
+    sh: source.sh,
+    label: source.label || "贴纸",
+    x: Math.round(x != null ? x : canvas.width / 2 - width / 2),
+    y: Math.round(y != null ? y : canvas.height / 2 - height / 2),
+    scale,
+    visible: true
+  };
+  recordHistory("添加贴纸", { immediate: true });
+  stickers.push(sticker);
+  selectedStickerId = sticker.id;
+  touchDocument();
+  render();
+  setInspectorTab("stickers");
+  showToast("已添加贴纸：" + sticker.label);
+  return sticker;
+}
+
+function deleteSelectedSticker() {
+  const sticker = selectedSticker();
+  if (!sticker) return;
+  recordHistory("删除贴纸", { immediate: true });
+  stickers = stickers.filter((item) => item.id !== sticker.id);
+  selectedStickerId = null;
+  touchDocument();
+  render();
+  showToast("已删除贴纸");
+}
+
+function clearStickers() {
+  if (!stickers.length) return;
+  recordHistory("清空贴纸", { immediate: true });
+  stickers = [];
+  selectedStickerId = null;
+  touchDocument();
+  render();
+  showToast("已清空贴纸");
+}
+
+function moveSelectedStickerOrder(delta) {
+  const index = stickers.findIndex((sticker) => sticker.id === selectedStickerId);
+  if (index < 0) return;
+  const target = clamp(index + delta, 0, stickers.length - 1);
+  if (target === index) return;
+  recordHistory("调整贴纸层级", { immediate: true });
+  const [sticker] = stickers.splice(index, 1);
+  stickers.splice(target, 0, sticker);
+  touchDocument();
+  render();
+}
+
+function drawStickers() {
+  for (const sticker of stickers) {
+    if (sticker.visible === false) continue;
+    const image = sticker.kind === "asset" ? stickerAssetImages[sticker.asset] : stickerSheetImages[sticker.sheet];
+    if (!image) continue;
+    const sw = Math.max(1, Math.round(sticker.sw));
+    const sh = Math.max(1, Math.round(sticker.sh));
+    const dw = Math.max(1, Math.round(sw * sticker.scale));
+    const dh = Math.max(1, Math.round(sh * sticker.scale));
+    ctx.drawImage(image, sticker.sx || 0, sticker.sy || 0, sw, sh, Math.round(sticker.x), Math.round(sticker.y), dw, dh);
+  }
+}
+
+function stickerBounds(sticker) {
+  return { width: sticker.sw * sticker.scale, height: sticker.sh * sticker.scale };
+}
+
+function syncStickerControls() {
+  if (!ui.stickerList) return;
+  const sticker = selectedSticker();
+  if (ui.stickerX) {
+    if (document.activeElement !== ui.stickerX) ui.stickerX.value = sticker ? Math.round(sticker.x) : "";
+    if (document.activeElement !== ui.stickerY) ui.stickerY.value = sticker ? Math.round(sticker.y) : "";
+    ui.stickerX.disabled = !sticker;
+    ui.stickerY.disabled = !sticker;
+  }
+  if (ui.stickerScale) {
+    ui.stickerScale.disabled = !sticker;
+    ui.stickerScaleOutput.textContent = sticker ? Math.round(sticker.scale * 100) + "%" : "—";
+    if (document.activeElement !== ui.stickerScale) ui.stickerScale.value = sticker ? String(Math.round(sticker.scale * 100)) : "100";
+  }
+  if (ui.stickerDelete) ui.stickerDelete.disabled = !sticker;
+  if (ui.stickerUp) ui.stickerUp.disabled = !sticker;
+  if (ui.stickerDown) ui.stickerDown.disabled = !sticker;
+  const listKey = stickers.map((item) => item.id + ":" + item.label).join("|") + "#" + (selectedStickerId || "");
+  if (ui.stickerList.dataset.key === listKey) return;
+  ui.stickerList.dataset.key = listKey;
+  ui.stickerList.innerHTML = stickers.length
+    ? stickers.map((item, index) => {
+      const image = item.kind === "asset" ? stickerAssetImages[item.asset] : stickerSheetImages[item.sheet];
+      const thumb = image && image.src ? image.src : "";
+      return '<button class="sticker-row' + (item.id === selectedStickerId ? " active" : "") + '" type="button" data-sticker="' + item.id + '">' +
+        '<img src="' + thumb + '" alt="">' +
+        "<span>" + (index + 1) + " · " + escapeHtml(item.label) + "</span></button>";
+    }).join("")
+    : '<p class="hint">还没有贴纸。到左侧“贴纸”里点一个，或拖进画面。</p>';
+}
+
+function beginStickerDrag(event, source) {
+  if (!source || event.button !== 0) return false;
+  stickerDrag = { source, startX: event.clientX, startY: event.clientY, moved: false, ghost: null };
+  return true;
+}
+
+function moveStickerDrag(event) {
+  if (!stickerDrag) return;
+  const dx = event.clientX - stickerDrag.startX;
+  const dy = event.clientY - stickerDrag.startY;
+  if (!stickerDrag.moved && Math.hypot(dx, dy) < 6) return;
+  stickerDrag.moved = true;
+  if (!stickerDrag.ghost) {
+    const ghost = document.createElement("div");
+    ghost.className = "sticker-ghost";
+    const image = stickerDrag.source.kind === "asset" ? stickerAssetImages[stickerDrag.source.asset] : stickerSheetImages[stickerDrag.source.sheet];
+    const ghostCanvas = document.createElement("canvas");
+    const size = 56;
+    ghostCanvas.width = size;
+    ghostCanvas.height = size;
+    const ghostContext = ghostCanvas.getContext("2d");
+    ghostContext.imageSmoothingEnabled = false;
+    if (image) ghostContext.drawImage(image, stickerDrag.source.sx || 0, stickerDrag.source.sy || 0, stickerDrag.source.sw, stickerDrag.source.sh, 0, 0, size, size);
+    ghost.append(ghostCanvas);
+    document.body.append(ghost);
+    stickerDrag.ghost = ghost;
+  }
+  stickerDrag.ghost.style.left = event.clientX + "px";
+  stickerDrag.ghost.style.top = event.clientY + "px";
+}
+
+function finishStickerDrag(event) {
+  if (!stickerDrag) return;
+  const drag = stickerDrag;
+  stickerDrag = null;
+  if (drag.ghost) drag.ghost.remove();
+  const stageRect = stage.getBoundingClientRect();
+  const inside = event.clientX >= stageRect.left && event.clientX <= stageRect.right &&
+    event.clientY >= stageRect.top && event.clientY <= stageRect.bottom;
+  if (drag.moved) {
+    if (!inside) return;
+    const scale = drag.source.defaultScale || 4;
+    const x = (event.clientX - stageRect.left) * canvas.width / stageRect.width - drag.source.sw * scale / 2;
+    const y = (event.clientY - stageRect.top) * canvas.height / stageRect.height - drag.source.sh * scale / 2;
+    addSticker(drag.source, x, y);
+    return;
+  }
+  addSticker(drag.source);
+}
+
+function bindStickerLibrary() {
+  if (!ui.stickerCategory) return;
+  ui.stickerCategory.value = stickerCategory;
+  ui.stickerCategory.addEventListener("change", () => {
+    stickerCategory = ui.stickerCategory.value;
+    renderStickerBrowser();
+    savePreferences();
+  });
+
+  ui.stickerGrid.addEventListener("pointerdown", (event) => {
+    const cell = stickerCellAt(event.clientX, event.clientY);
+    if (!cell) return;
+    if (beginStickerDrag(event, stickerSourceFromCell(cell))) {
+      ui.stickerGrid.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    }
+  });
+  ui.stickerGrid.addEventListener("pointermove", moveStickerDrag);
+  ui.stickerGrid.addEventListener("pointerup", finishStickerDrag);
+  ui.stickerGrid.addEventListener("pointercancel", finishStickerDrag);
+
+  ui.stickerAssets.addEventListener("pointerdown", (event) => {
+    const button = event.target.closest(".sticker-asset");
+    if (!button) return;
+    if (beginStickerDrag(event, stickerSourceFromAsset(button.dataset.asset))) {
+      ui.stickerAssets.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    }
+  });
+  ui.stickerAssets.addEventListener("pointermove", moveStickerDrag);
+  ui.stickerAssets.addEventListener("pointerup", finishStickerDrag);
+  ui.stickerAssets.addEventListener("pointercancel", finishStickerDrag);
+  ui.stickerAssets.addEventListener("click", (event) => {
+    // 鼠标点击已由 pointerup 处理；这里只保留键盘回车/空格触发
+    if (event.detail !== 0) return;
+    const button = event.target.closest(".sticker-asset");
+    if (!button) return;
+    const source = stickerSourceFromAsset(button.dataset.asset);
+    if (source) addSticker(source);
+  });
+
+  ui.stickerList.addEventListener("click", (event) => {
+    const row = event.target.closest(".sticker-row");
+    if (!row) return;
+    selectedStickerId = row.dataset.sticker;
+    render();
+  });
+  ui.stickerDelete.addEventListener("click", deleteSelectedSticker);
+  ui.stickerClear.addEventListener("click", clearStickers);
+  ui.stickerUp.addEventListener("click", () => moveSelectedStickerOrder(1));
+  ui.stickerDown.addEventListener("click", () => moveSelectedStickerOrder(-1));
+
+  const moveStickerByInputs = () => {
+    const sticker = selectedSticker();
+    if (!sticker) return;
+    beginGesture("调整贴纸位置");
+    const x = Number(ui.stickerX.value);
+    const y = Number(ui.stickerY.value);
+    if (Number.isFinite(x)) sticker.x = x;
+    if (Number.isFinite(y)) sticker.y = y;
+    touchDocument();
+    render();
+  };
+  ui.stickerX.addEventListener("input", moveStickerByInputs);
+  ui.stickerY.addEventListener("input", moveStickerByInputs);
+  ui.stickerX.addEventListener("pointerdown", () => beginGesture("调整贴纸位置"));
+  ui.stickerY.addEventListener("pointerdown", () => beginGesture("调整贴纸位置"));
+  ui.stickerX.addEventListener("change", () => endGesture());
+  ui.stickerY.addEventListener("change", () => endGesture());
+
+  ui.stickerScale.addEventListener("pointerdown", () => beginGesture("缩放贴纸"));
+  ui.stickerScale.addEventListener("input", () => {
+    const sticker = selectedSticker();
+    if (!sticker) return;
+    beginGesture("缩放贴纸");
+    sticker.scale = clamp(Number(ui.stickerScale.value) / 100, 0.25, 8);
+    touchDocument();
+    render();
+  });
+  const finishStickerScale = () => endGesture();
+  ui.stickerScale.addEventListener("change", finishStickerScale);
+  ui.stickerScale.addEventListener("pointerup", finishStickerScale);
+}
+
+let stickerDrag = null;
+
+/* ------------------------------------------------------------------ */
 /* History                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -635,6 +1115,8 @@ function snapshotDocument() {
     keyframes: keyframes.map((frame) => structuredClone(frame)),
     images: { ...imageLibrary },
     itemImages: { ...customItemData },
+    stickers: stickers.map((sticker) => ({ ...sticker })),
+    selectedStickerId,
     smooth: ui.smooth.checked,
     autoKey: ui.autoKey.checked,
     snap: ui.snap.checked,
@@ -660,10 +1142,10 @@ function pushUndo(snapshot, label) {
   updateHistoryButtons();
 }
 
-function recordHistory(label) {
+function recordHistory(label, options = {}) {
   if (gesture) return;
   const now = performance.now();
-  if (history.lastLabel === label && now - history.lastAt < 450) {
+  if (!options.immediate && history.lastLabel === label && now - history.lastAt < 450) {
     history.lastAt = now;
     return;
   }
@@ -704,6 +1186,8 @@ async function restoreDocument(snapshot) {
   ui.smooth.checked = snapshot.smooth !== false;
   ui.autoKey.checked = snapshot.autoKey !== false;
   ui.snap.checked = snapshot.snap !== false;
+  stickers = (snapshot.stickers || []).map((sticker) => ({ ...sticker }));
+  selectedStickerId = snapshot.selectedStickerId || null;
   state.layout = snapshot.layoutMode === "portrait" ? "portrait" : "landscape";
   selectedKeyframeIndex = clampInt(snapshot.selectedKeyframeIndex, 0, Math.max(0, keyframes.length - 1), 0);
   for (const id of Object.keys(snapshot.images || {})) await ensureImageLoaded(id);
@@ -817,7 +1301,7 @@ function addKeyframeAtPlayhead() {
     return;
   }
   const at = clamp(roundTime(currentPlayheadTime()), 0, timelineDuration());
-  recordHistory("添加关键帧");
+  recordHistory("添加关键帧", { immediate: true });
   const existing = findFrameIndexAt(at);
   if (existing >= 0) {
     Object.assign(keyframes[existing], captureLiveFrame(), { at: keyframes[existing].at });
@@ -848,7 +1332,7 @@ function deleteSelectedKeyframe() {
     showToast("至少保留一个关键帧");
     return;
   }
-  recordHistory("删除关键帧");
+  recordHistory("删除关键帧", { immediate: true });
   const removed = keyframes.splice(selectedKeyframeIndex, 1)[0];
   selectedKeyframeIndex = Math.max(0, Math.min(selectedKeyframeIndex, keyframes.length - 1));
   const target = keyframes[selectedKeyframeIndex];
@@ -860,7 +1344,7 @@ function deleteSelectedKeyframe() {
 function changeOrientation(mode) {
   if (mode !== "portrait" && mode !== "landscape") return;
   if (mode === state.layout) return;
-  recordHistory("切换画幅");
+  recordHistory("切换画幅", { immediate: true });
   const previous = state.layout;
   const fromSize = canvasSizeFor(previous);
   const toSize = canvasSizeFor(mode);
@@ -888,6 +1372,7 @@ function changeOrientation(mode) {
   componentLayout = remap(componentLayout);
   for (const frame of keyframes) frame.layers = remap(frame.layers);
   touchDocument();
+  savePreferences();
   render();
 }
 
@@ -1191,10 +1676,12 @@ function bindTimeline() {
   ui.zoomFit.addEventListener("click", () => setTimelineZoom(1));
   ui.snap.addEventListener("change", () => {
     touchDocument();
+    savePreferences();
     showToast(ui.snap.checked ? "已开启吸附" : "已关闭吸附");
   });
   ui.autoKey.addEventListener("change", () => {
     touchDocument();
+    savePreferences();
     showToast(ui.autoKey.checked ? "已开启自动关键帧" : "自动关键帧已关闭：修改会写回最近关键帧");
   });
 }
@@ -1320,12 +1807,39 @@ function drawClock() {
     3
   );
 
+  // 金币牌：DayTimeMoneyBox 里固定 8 位数字槽，从 position+(68,196) 起每格 24px 前进，
+  // 数字来自 Cursors(286, 502-digit*8, 5, 8)，Color.Maroon 染色，4 倍绘制。
   drawSprite(Cursors, 340, 472, 65, 17, 28, 172, 4);
-  const moneyText = String(state.money);
-  const moneyMeasure = SmallFont.measure(moneyText);
-  drawShadowText(SmallFont, moneyText, 150 - moneyMeasure.width / 2, 188, "#d61f1f", 1, 1);
+  drawMoneyDigits(state.money);
   drawClockHand(88, 88, clockRotation(state.time));
   ctx.restore();
+}
+
+const moneyDigitCache = {};
+
+function moneyDigitCanvas(digit) {
+  if (moneyDigitCache[digit]) return moneyDigitCache[digit];
+  const canvas = document.createElement("canvas");
+  canvas.width = 5;
+  canvas.height = 8;
+  const digitContext = canvas.getContext("2d");
+  digitContext.imageSmoothingEnabled = false;
+  digitContext.drawImage(Cursors, 286, 502 - digit * 8, 5, 8, 0, 0, 5, 8);
+  digitContext.globalCompositeOperation = "source-in";
+  digitContext.fillStyle = "#800000";
+  digitContext.fillRect(0, 0, 5, 8);
+  moneyDigitCache[digit] = canvas;
+  return canvas;
+}
+
+function drawMoneyDigits(money) {
+  const text = String(Math.max(0, Math.floor(Number(money) || 0))).slice(-8);
+  const firstSlot = 8 - text.length;
+  for (let index = 0; index < text.length; index++) {
+    const digit = Number(text[index]);
+    const slot = firstSlot + index;
+    ctx.drawImage(moneyDigitCanvas(digit), 68 + slot * 24, 196, 20, 32);
+  }
 }
 
 function staminaColor(ratio) {
@@ -1526,6 +2040,7 @@ function render(shouldSync = true) {
   drawStamina();
   drawToolbar();
   drawCaption();
+  drawStickers();
   if (shouldSync) {
     syncControls();
     syncLayerControls();
@@ -1556,8 +2071,10 @@ function syncControls() {
   ui.itemPicker.querySelectorAll(".item-choice").forEach((button) => {
     button.classList.toggle("active", button.dataset.item === state.item);
   });
+  if (ui.stickerCategory && ui.stickerCategory.value !== stickerCategory) ui.stickerCategory.value = stickerCategory;
   syncPresetList();
   syncFrameSummary();
+  syncStickerControls();
 }
 
 function syncLayerControls() {
@@ -1608,7 +2125,9 @@ function selectionSignatureFor(stageRect) {
       const layout = componentLayout[name] || {};
       return name + ":" + Math.round(layout.x || 0) + "," + Math.round(layout.y || 0) + "," +
         Number(layout.scale || 1).toFixed(3) + "," + (componentVisible(name) ? 1 : 0);
-    })
+    }),
+    "s:" + stickers.map((sticker) => sticker.id + "," + Math.round(sticker.x) + "," + Math.round(sticker.y) + "," +
+      sticker.scale.toFixed(3) + "," + (sticker.visible === false ? 0 : 1) + "," + (sticker.id === selectedStickerId ? 1 : 0)).join(";")
   ].join("|");
 }
 
@@ -1619,19 +2138,33 @@ function updateSelectionBoxes(force = false) {
   const signature = selectionSignatureFor(stageRect);
   if (!force && signature === selectionSignature) return;
   selectionSignature = signature;
-  ui.selectionLayer.innerHTML = LAYER_NAMES.filter(componentVisible).map((name) => {
+  const scaleX = stageRect.width / canvas.width;
+  const scaleY = stageRect.height / canvas.height;
+  const components = LAYER_NAMES.filter(componentVisible).map((name) => {
     const layout = componentLayout[name];
     if (!layout) return "";
     const base = componentBounds(name);
-    const left = (layout.x + base.xOffset * layout.scale) * stageRect.width / canvas.width;
-    const top = layout.y * stageRect.height / canvas.height;
-    const width = base.width * layout.scale * stageRect.width / canvas.width;
-    const height = base.height * layout.scale * stageRect.height / canvas.height;
-    return '<div class="component-selection ' + (selectedComponent === name ? "active" : "") +
+    const left = (layout.x + base.xOffset * layout.scale) * scaleX;
+    const top = layout.y * scaleY;
+    const width = base.width * layout.scale * scaleX;
+    const height = base.height * layout.scale * scaleY;
+    return '<div class="component-selection ' + (selectedComponent === name && !selectedStickerId ? "active" : "") +
       '" data-component="' + name + '" style="left:' + left + 'px;top:' + top + 'px;width:' + width +
       'px;height:' + height + 'px"><span>' + componentLabel(name) +
       '</span><i class="component-resize" data-resize="' + name + '"></i></div>';
-  }).join("");
+  });
+  const stickerBoxes = stickers.filter((sticker) => sticker.visible !== false).map((sticker) => {
+    const active = sticker.id === selectedStickerId;
+    const left = sticker.x * scaleX;
+    const top = sticker.y * scaleY;
+    const width = sticker.sw * sticker.scale * scaleX;
+    const height = sticker.sh * sticker.scale * scaleY;
+    return '<div class="component-selection sticker-selection ' + (active ? "active" : "") +
+      '" data-sticker-id="' + sticker.id + '" style="left:' + left + 'px;top:' + top + 'px;width:' + width +
+      'px;height:' + height + 'px"><span>' + escapeHtml(sticker.label || "贴纸") +
+      '</span><i class="component-resize" data-sticker-resize="' + sticker.id + '"></i></div>';
+  });
+  ui.selectionLayer.innerHTML = components.join("") + stickerBoxes.join("");
 }
 
 function setInspectorTab(tab) {
@@ -1646,6 +2179,7 @@ function setInspectorTab(tab) {
   });
   const scroller = document.querySelector(".inspector-scroll");
   if (scroller) scroller.scrollTop = 0;
+  savePreferences();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1767,6 +2301,19 @@ function setClean(clean) {
 function setLibraryOpen(open) {
   document.body.classList.toggle("library-open", Boolean(open));
   if (ui.libraryToggle) ui.libraryToggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function setLibraryTab(tab) {
+  ui.libraryTabs.forEach((button) => {
+    const active = button.dataset.libraryTab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  ui.libraryPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.libraryPanel !== tab;
+  });
+  if (tab === "stickers") renderStickerBrowser();
+  savePreferences();
 }
 
 function openExportDialog() {
@@ -1981,6 +2528,7 @@ function serializeProject() {
     video: videoMeta ? { ...videoMeta } : (expectedVideo ? { ...expectedVideo } : null),
     images: { ...imageLibrary },
     itemImages: { ...customItemData },
+    stickers: stickers.map((sticker) => ({ ...sticker })),
     keyframes: keyframes.map((frame) => structuredClone(frame))
   };
 }
@@ -2032,6 +2580,7 @@ function migrateProject(raw) {
     video: normalizeVideoMeta(project.video),
     images: sanitizeImageMap(project.images),
     itemImages: sanitizeImageMap(project.itemImages),
+    stickers: Array.isArray(project.stickers) ? project.stickers : [],
     keyframes: project.keyframes
   };
 }
@@ -2070,6 +2619,8 @@ async function applyProjectObject(rawProject, options = {}) {
   }
   if (!frames.length) throw new Error("工程里没有可用关键帧");
   keyframes = frames;
+  stickers = (project.stickers || []).map(normalizeSticker).filter(Boolean);
+  selectedStickerId = null;
   selectedKeyframeIndex = 0;
   expectedVideo = project.video;
   componentLayout = structuredClone(keyframes[0].layers);
@@ -2184,6 +2735,149 @@ function initAutosave() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Preferences (工作区习惯持久化)                                      */
+/* ------------------------------------------------------------------ */
+
+const PREFS_KEY = "stardew-vlog-hud.prefs.v1";
+const defaultPreferences = {
+  layout: "landscape",
+  inspectorTab: "scene",
+  libraryTab: "assets",
+  stickerCategory: "items",
+  timelineHeight: 208,
+  autoKey: true,
+  snap: true,
+  smooth: true,
+  group: "commute",
+  item: "phone",
+  aiModel: "gpt-image-2.5-flare",
+  aiPrompt: "棕色木质像素游戏界面，清晰描边，暖色，无文字，透明背景",
+  aiTarget: "clock",
+  photo: null,
+  autoRestore: true
+};
+let preferences = { ...defaultPreferences };
+let prefsTimer = 0;
+
+function loadPreferences() {
+  let stored = null;
+  try {
+    stored = JSON.parse(localStorage.getItem(PREFS_KEY) || "null");
+  } catch {
+    stored = null;
+  }
+  if (stored && typeof stored === "object") {
+    preferences = { ...defaultPreferences, ...stored };
+  }
+  // 恢复界面与开关
+  ui.autoKey.checked = preferences.autoKey !== false;
+  ui.snap.checked = preferences.snap !== false;
+  ui.smooth.checked = preferences.smooth !== false;
+  if (preferences.layout === "portrait" || preferences.layout === "landscape") state.layout = preferences.layout;
+  if (Object.hasOwn(GROUPS, preferences.group) && preferences.item && Object.hasOwn(ITEMS, preferences.item)) {
+    state.group = preferences.group;
+    state.item = preferences.item;
+  }
+  const height = clamp(Number(preferences.timelineHeight) || 208, 132, 460);
+  document.documentElement.style.setProperty("--timeline-height", height + "px");
+  stickerCategory = STICKER_SHEETS[preferences.stickerCategory] || STICKER_ASSET_GROUPS[preferences.stickerCategory]
+    ? preferences.stickerCategory
+    : "items";
+  if (ui.stickerCategory) ui.stickerCategory.value = stickerCategory;
+  if (ui.aiModel) ui.aiModel.value = preferences.aiModel || defaultPreferences.aiModel;
+  if (ui.aiPrompt) ui.aiPrompt.value = preferences.aiPrompt || defaultPreferences.aiPrompt;
+  if (ui.aiTarget) ui.aiTarget.value = STICKER_SHEETS[preferences.aiTarget] ? "clock" : (preferences.aiTarget || "clock");
+  if (ui.autoRestoreInput) ui.autoRestoreInput.checked = preferences.autoRestore !== false;
+  if (preferences.photo && typeof preferences.photo === "string" && preferences.photo.startsWith("data:image/")) {
+    scene.style.setProperty("--photo", 'url("' + preferences.photo + '")');
+    scene.classList.add("has-photo");
+    scene.dataset.persisted = "1";
+  }
+}
+
+function savePreferences() {
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => {
+    try {
+      preferences.layout = state.layout;
+      preferences.inspectorTab = ui.inspectorPanel?.dataset.activeTab || preferences.inspectorTab;
+      preferences.libraryTab = document.querySelector(".library-tab.active")?.dataset.libraryTab || preferences.libraryTab;
+      preferences.stickerCategory = stickerCategory;
+      preferences.timelineHeight = Math.round(ui.dock?.getBoundingClientRect().height || 208);
+      preferences.autoKey = ui.autoKey.checked;
+      preferences.snap = ui.snap.checked;
+      preferences.smooth = ui.smooth.checked;
+      preferences.group = state.group;
+      preferences.item = state.item;
+      preferences.aiModel = ui.aiModel.value;
+      preferences.aiPrompt = ui.aiPrompt.value;
+      preferences.aiTarget = ui.aiTarget.value;
+      preferences.autoRestore = ui.autoRestoreInput ? ui.autoRestoreInput.checked : preferences.autoRestore;
+      localStorage.setItem(PREFS_KEY, JSON.stringify(preferences));
+    } catch (error) {
+      console.warn("保存操作习惯失败", error);
+    }
+  }, 300);
+}
+
+async function tryRestoreAutosave() {
+  if (preferences.autoRestore === false) {
+    initAutosave();
+    return false;
+  }
+  let raw = null;
+  try {
+    raw = localStorage.getItem(AUTOSAVE_KEY);
+  } catch {
+    return false;
+  }
+  if (!raw) return false;
+  try {
+    const saved = JSON.parse(raw);
+    if (!saved?.project?.keyframes?.length) return false;
+    await applyProjectObject(saved.project, { silent: true });
+    showToast("已恢复上次工程（" + keyframes.length + " 个关键帧）");
+    return true;
+  } catch (error) {
+    console.warn("自动恢复工程失败", error);
+    initAutosave();
+    return false;
+  }
+}
+
+function newProject() {
+  if (isExporting) {
+    showToast("导出中不能新建工程");
+    return;
+  }
+  recordHistory("新建工程", { immediate: true });
+  for (const id of Object.keys(imageLibrary)) delete imageLibrary[id];
+  for (const id of Object.keys(imageObjects)) delete imageObjects[id];
+  for (const key of Object.keys(customItemData)) delete customItemData[key];
+  for (const key of Object.keys(customItemImages)) delete customItemImages[key];
+  componentImageIds = { clock: null, stamina: null, toolbar: null, caption: null };
+  stickers = [];
+  selectedStickerId = null;
+  resetComponentLayout(state.layout);
+  resetTimeline();
+  selectedKeyframeIndex = 0;
+  expectedVideo = null;
+  try {
+    localStorage.removeItem(AUTOSAVE_KEY);
+  } catch {
+    // ignore
+  }
+  autosaveCandidate = null;
+  ui.autosaveBar.hidden = true;
+  docRevision++;
+  render();
+  syncControls();
+  updateTimelineMeta(0);
+  updateProjectMeta();
+  showToast("已新建空工程");
+}
+
+/* ------------------------------------------------------------------ */
 /* Images                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -2267,9 +2961,22 @@ async function generateAiImage() {
 
 function bindSelectionInteractions() {
   let action = null;
+
+  stage.addEventListener("pointerdown", (event) => {
+    if (event.target.closest(".component-selection")) return;
+    if (selectedStickerId) {
+      selectedStickerId = null;
+      render();
+    }
+  });
+
   ui.selectionLayer.addEventListener("pointerdown", (event) => {
     const box = event.target.closest(".component-selection");
     if (!box) return;
+    if (box.dataset.stickerId) {
+      startStickerDrag(event, box);
+      return;
+    }
     const name = box.dataset.component;
     selectedComponent = name;
     setInspectorTab(name === "caption" ? "caption" : "layers");
@@ -2295,6 +3002,23 @@ function bindSelectionInteractions() {
   });
 
   ui.selectionLayer.addEventListener("pointermove", (event) => {
+    if (stickerAction) {
+      const { sticker, resizing } = stickerAction;
+      const dx = event.clientX - stickerAction.startX;
+      const dy = event.clientY - stickerAction.startY;
+      if (resizing) {
+        const baseWidth = Math.max(1, sticker.sw * stickerAction.startScale * stickerAction.stageWidth / canvas.width);
+        const baseHeight = Math.max(1, sticker.sh * stickerAction.startScale * stickerAction.stageHeight / canvas.height);
+        const delta = (dx / baseWidth + dy / baseHeight) / 2;
+        sticker.scale = clamp(stickerAction.startScale + delta, 0.25, 8);
+      } else {
+        sticker.x = stickerAction.startStickerX + dx * canvas.width / stickerAction.stageWidth;
+        sticker.y = stickerAction.startStickerY + dy * canvas.height / stickerAction.stageHeight;
+      }
+      touchDocument();
+      render();
+      return;
+    }
     if (!action) return;
     const layout = componentLayout[action.name];
     if (!layout) return;
@@ -2318,6 +3042,12 @@ function bindSelectionInteractions() {
   });
 
   const finish = () => {
+    if (stickerAction) {
+      stickerAction = null;
+      endGesture();
+      render();
+      return;
+    }
     if (!action) return;
     action = null;
     endGesture();
@@ -2325,6 +3055,32 @@ function bindSelectionInteractions() {
   };
   ui.selectionLayer.addEventListener("pointerup", finish);
   ui.selectionLayer.addEventListener("pointercancel", finish);
+}
+
+let stickerAction = null;
+
+function startStickerDrag(event, box) {
+  const sticker = stickers.find((item) => item.id === box.dataset.stickerId);
+  if (!sticker) return;
+  selectedStickerId = sticker.id;
+  setInspectorTab("stickers");
+  const stageRect = stage.getBoundingClientRect();
+  const resizing = event.target.classList.contains("component-resize");
+  beginGesture(resizing ? "缩放贴纸" : "移动贴纸");
+  stickerAction = {
+    sticker,
+    resizing,
+    startX: event.clientX,
+    startY: event.clientY,
+    startStickerX: sticker.x,
+    startStickerY: sticker.y,
+    startScale: sticker.scale,
+    stageWidth: stageRect.width,
+    stageHeight: stageRect.height
+  };
+  ui.selectionLayer.setPointerCapture(event.pointerId);
+  updateSelectionBoxes(true);
+  event.preventDefault();
 }
 
 /* ------------------------------------------------------------------ */
@@ -2631,6 +3387,7 @@ function bindDockResize() {
     dockDrag = null;
     document.body.classList.remove("resizing-dock");
     updateSelectionBoxes(true);
+    savePreferences();
   };
   ui.dockResize.addEventListener("pointerup", finishDockResize);
   ui.dockResize.addEventListener("pointercancel", finishDockResize);
@@ -2682,6 +3439,11 @@ function bindKeyboard() {
         closeExportDialog();
         return;
       }
+      if (selectedStickerId) {
+        selectedStickerId = null;
+        render();
+        return;
+      }
       if (document.body.classList.contains("library-open")) {
         setLibraryOpen(false);
         return;
@@ -2711,6 +3473,10 @@ function bindKeyboard() {
     }
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
+      if (selectedStickerId) {
+        deleteSelectedSticker();
+        return;
+      }
       deleteSelectedKeyframe();
       return;
     }
@@ -2734,6 +3500,7 @@ function bindControls() {
   bindTimeline();
   bindDockResize();
   bindKeyboard();
+  bindStickerLibrary();
 
   ui.layoutButtons.forEach((button) => {
     button.addEventListener("click", () => changeOrientation(button.dataset.layout));
@@ -2756,6 +3523,9 @@ function bindControls() {
 
   ui.libraryToggle.addEventListener("click", () => setLibraryOpen(!document.body.classList.contains("library-open")));
   ui.libraryBackdrop.addEventListener("click", () => setLibraryOpen(false));
+  ui.libraryTabs.forEach((button) => {
+    button.addEventListener("click", () => setLibraryTab(button.dataset.libraryTab));
+  });
 
   ui.presetList.addEventListener("click", (event) => {
     const button = event.target.closest(".preset-chip");
@@ -2886,6 +3656,7 @@ function bindControls() {
     recordHistory("切换平滑");
     applyTimelineTime(currentPlayheadTime());
     touchDocument();
+    savePreferences();
     render();
   });
 
@@ -2918,7 +3689,7 @@ function bindControls() {
     updateFromInputs("切换信息卡显示");
   });
 
-  ui.photo.addEventListener("change", () => {
+  ui.photo.addEventListener("change", async () => {
     const file = ui.photo.files?.[0];
     if (!file) return;
     if (scene.dataset.url) URL.revokeObjectURL(scene.dataset.url);
@@ -2926,6 +3697,17 @@ function bindControls() {
     scene.dataset.url = url;
     scene.style.setProperty("--photo", 'url("' + url + '")');
     scene.classList.add("has-photo");
+    // 小图直接存成 Data URL，下次打开自动恢复；过大就跳过，避免撑爆 localStorage
+    if (file.size <= 1_600_000) {
+      try {
+        preferences.photo = await dataUrlForFile(file);
+      } catch {
+        preferences.photo = null;
+      }
+    } else {
+      preferences.photo = null;
+    }
+    savePreferences();
   });
 
   ui.clearPhoto.addEventListener("click", () => {
@@ -2934,6 +3716,23 @@ function bindControls() {
     scene.style.removeProperty("--photo");
     scene.classList.remove("has-photo");
     ui.photo.value = "";
+    preferences.photo = null;
+    savePreferences();
+  });
+
+  ui.aiModel.addEventListener("input", savePreferences);
+  ui.aiPrompt.addEventListener("input", savePreferences);
+  ui.aiTarget.addEventListener("change", savePreferences);
+  if (ui.autoRestoreInput) {
+    ui.autoRestoreInput.addEventListener("change", () => {
+      preferences.autoRestore = ui.autoRestoreInput.checked;
+      savePreferences();
+      showToast(ui.autoRestoreInput.checked ? "下次打开会自动恢复上次工程" : "下次打开不再自动恢复");
+    });
+  }
+  if (ui.newProjectButton) ui.newProjectButton.addEventListener("click", () => {
+    if (!confirm("新建空工程会清空当前关键帧、贴纸和替换图片，确定继续？")) return;
+    newProject();
   });
 
   ui.clean.addEventListener("click", () => {
@@ -2987,22 +3786,27 @@ async function loadAssets() {
   await Promise.all(Object.entries(ITEMS).filter(([, item]) => !item.heart).map(async ([, item]) => {
     itemImages[item.source] = await loadImage("./assets/items/" + item.source + ".png");
   }));
+  await loadStickerAssets();
   render();
 }
 
 async function init() {
   populateControls();
+  loadPreferences();
   parseQuery();
   resetComponentLayout(state.layout);
   bindControls();
-  setInspectorTab("scene");
+  const tabs = ["scene", "caption", "layers", "stickers", "ai"];
+  setInspectorTab(tabs.includes(preferences.inspectorTab) ? preferences.inspectorTab : "scene");
+  setLibraryTab(preferences.libraryTab === "stickers" ? "stickers" : "assets");
   await loadAssets();
-  resetTimeline();
+  renderStickerBrowser();
+  const restored = await tryRestoreAutosave();
+  if (!restored) resetTimeline();
   syncControls();
   updateTimelineMeta(0);
   updateProjectMeta();
   updateHistoryButtons();
-  initAutosave();
   startVideoLoop();
   ready = true;
 }
@@ -3019,6 +3823,12 @@ window.vlogHUD = {
   },
   get layers() {
     return structuredClone(componentLayout);
+  },
+  get stickers() {
+    return stickers.map((sticker) => ({ ...sticker }));
+  },
+  get selectedStickerId() {
+    return selectedStickerId;
   },
   get videoMeta() {
     return videoMeta ? { ...videoMeta } : null;
@@ -3072,6 +3882,10 @@ window.vlogHUD = {
   },
   undo,
   redo,
+  newProject,
+  get preferences() {
+    return { ...preferences };
+  },
   queryUrl,
   exportVideo,
   cancelExport,

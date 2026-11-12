@@ -66,6 +66,7 @@ async function probeVideo(file) {
 }
 
 async function reload({ keepStorage = false } = {}) {
+  await page.setClearStorageOnLoad(!keepStorage);
   await page.goto(pageUrl);
   if (!keepStorage) await page.evaluate("localStorage.clear()");
   await page.waitFor("window.vlogHUD && window.vlogHUD.ready === true", { label: "HUD 渲染完成" });
@@ -188,7 +189,7 @@ suites.baseline = async () => {
   check("原版物品按钮 17 个", metrics.items === 17, String(metrics.items));
   check("场景预设 9 个", metrics.presets === 9, String(metrics.presets));
   check("HUD 选区 4 个", metrics.selections === 4, String(metrics.selections));
-  check("检查器分页 4 个", metrics.tabs === 4, String(metrics.tabs));
+  check("检查器分页 5 个", metrics.tabs === 5, String(metrics.tabs));
   check("默认分页为画面", metrics.activeTab === "scene", metrics.activeTab);
   check("Canvas 横屏 1920×1080", metrics.canvas[0] === 1920 && metrics.canvas[1] === 1080, metrics.canvas.join("×"));
   check("预览区与 Canvas 宽高比一致", near(metrics.stage[0] / metrics.stage[1], 1920 / 1080, 0.01),
@@ -545,7 +546,7 @@ suites.project = async () => {
   const file = await page.waitForFile(/\.json$/);
   const project = JSON.parse(await readFile(file, "utf8"));
   check("工程 JSON 可保存", project.format === "stardew-vlog-hud", "v" + project.version);
-  check("工程版本为 2", project.version === 2, String(project.version));
+  check("工程版本为 3", project.version === 3, String(project.version));
   check("工程记录视频元数据", Boolean(project.video && project.video.name), JSON.stringify(project.video));
   check("工程记录关键帧图层", Array.isArray(project.keyframes) && Boolean(project.keyframes[0].layers), "layers ok");
   await page.evaluate("document.querySelector('#exportDialog').close()");
@@ -570,7 +571,7 @@ suites.project = async () => {
     const result = window.vlogHUD.project.migrate(legacy);
     return { version: result.version, layers: result.keyframes[0].layers.clock };
   })()`);
-  check("v1 工程可迁移到 v2", migrated.version === 2, "v" + migrated.version);
+  check("v1 工程可迁移到当前版本", migrated.version === 3, "v" + migrated.version);
   check("迁移后补充图层数据", Boolean(migrated.layers && Number.isFinite(migrated.layers.x)), JSON.stringify(migrated.layers));
 
   const legacyImage = await page.evaluate(`(() => {
@@ -632,12 +633,28 @@ suites.project = async () => {
     await page.evaluate("new Promise((r) => setTimeout(r, 1800))");
     check("自动保存写入 localStorage", await page.evaluate("Boolean(localStorage.getItem('stardew-vlog-hud.autosave.v2'))"));
 
+    // 默认开启自动恢复：重开后直接恢复工程，不再弹提示条
+    await reload({ keepStorage: true });
+    await page.waitFor("window.vlogHUD.keyframes.some((f) => f.tag === '自动保存')", { label: "自动恢复工程", timeout: 8000 });
+    check("重开后自动恢复上次工程", true);
+    check("自动恢复后不显示提示条", (await page.evaluate("document.querySelector('#autosaveBar').hidden")) === true);
+
+    // 关掉自动恢复后，改用提示条手动恢复
+    await page.evaluate(`(() => {
+      const cb = document.querySelector("#autoRestoreInput");
+      cb.checked = false;
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+      const input = document.querySelector("#tagInput");
+      input.value = "手动恢复";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await page.evaluate("new Promise((r) => setTimeout(r, 1800))");
     await reload({ keepStorage: true });
     const barVisible = await page.evaluate("!document.querySelector('#autosaveBar').hidden");
-    check("重新打开提示自动保存", barVisible);
+    check("关闭自动恢复后显示提示条", barVisible);
     if (barVisible) {
       await page.click("#autosaveRestore");
-      await page.waitFor("window.vlogHUD.keyframes.some((f) => f.tag === '自动保存')", { label: "恢复自动保存" });
+      await page.waitFor("window.vlogHUD.keyframes.some((f) => f.tag === '手动恢复')", { label: "恢复自动保存" });
       check("恢复自动保存后隐藏提示条", (await page.evaluate("document.querySelector('#autosaveBar').hidden")) === true);
     }
   } else {
@@ -860,6 +877,11 @@ suites.controls = async () => {
   check("日期输入写入状态", (await page.evaluate("window.vlogHUD.state.day")) === 26);
   await setInput("#moneyInput", "4321");
   check("金币输入写入状态", (await page.evaluate("window.vlogHUD.state.money")) === 4321);
+  const moneyBefore = await canvasHash(1648, 180, 260, 68);
+  await setInput("#moneyInput", "1234567");
+  const moneyAfter = await canvasHash(1648, 180, 260, 68);
+  check("金币数字使用原版像素数字重绘", moneyBefore !== moneyAfter, moneyBefore + " → " + moneyAfter);
+  await setInput("#moneyInput", "4321");
   await setInput("#dayInput", "99");
   check("日期越界被夹住", (await page.evaluate("window.vlogHUD.state.day")) === 28,
     String(await page.evaluate("window.vlogHUD.state.day")));
@@ -1251,6 +1273,216 @@ suites.robustness = async () => {
   check("拖出边界后不残留时间气泡", afterWild.bubbleHidden === true);
 };
 
+suites.stickers = async () => {
+  await reload();
+  await importVideo();
+  const canvasBefore = await canvasHash(860, 380, 220, 220);
+
+  await page.click('[data-library-tab="stickers"]');
+  await waitForIdle();
+  const library = await page.evaluate(`(() => ({
+    panel: !document.querySelector('[data-library-panel="stickers"]').hidden,
+    assets: document.querySelectorAll(".sticker-asset").length
+  }))()`);
+  check("贴纸素材库可切换", library.panel === true && library.assets >= 10, library.assets + " 个素材");
+
+  await page.click('.sticker-asset[data-asset="items:telephone"]');
+  await waitForIdle();
+  const added = await page.evaluate(`(() => ({
+    count: window.vlogHUD.stickers.length,
+    sticker: window.vlogHUD.stickers[0],
+    selected: window.vlogHUD.selectedStickerId,
+    tab: document.querySelector("#inspectorPanel").dataset.activeTab,
+    boxes: document.querySelectorAll(".sticker-selection").length
+  }))()`);
+  check("点击素材加入贴纸", added.count === 1 && added.sticker.kind === "asset", added.sticker?.label);
+  check("贴纸自动选中并切到贴纸页", Boolean(added.selected) && added.tab === "stickers");
+  check("贴纸在画布上出现选区", added.boxes === 1, String(added.boxes) + " 个选区");
+  const canvasAfter = await canvasHash(860, 380, 220, 220);
+  check("贴纸绘制到画面", canvasBefore !== canvasAfter, canvasBefore + " → " + canvasAfter);
+
+  // 拖动画布上的贴纸
+  const box = await page.evaluate(`(() => {
+    const r = document.querySelector(".sticker-selection.active").getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  const beforeMove = await page.evaluate("window.vlogHUD.stickers[0]");
+  await dragOnPage(box, { x: box.x + 80, y: box.y + 40 }, 6);
+  const afterMove = await page.evaluate("window.vlogHUD.stickers[0]");
+  check("拖动贴纸改变位置", Math.abs(afterMove.x - beforeMove.x) > 30,
+    `x ${Math.round(beforeMove.x)} → ${Math.round(afterMove.x)}`);
+
+  // 拖右下角把手缩放
+  const handle = await page.evaluate(`(() => {
+    const r = document.querySelector(".sticker-selection.active .component-resize").getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  const beforeScale = await page.evaluate("window.vlogHUD.stickers[0].scale");
+  await dragOnPage(handle, { x: handle.x + 40, y: handle.y + 40 }, 5);
+  const afterScale = await page.evaluate("window.vlogHUD.stickers[0].scale");
+  check("拖把手缩放贴纸", afterScale > beforeScale, beforeScale.toFixed(2) + " → " + afterScale.toFixed(2));
+
+  // 网格分类里再点一个
+  await page.evaluate(`(() => {
+    const select = document.querySelector("#stickerCategory");
+    select.value = "springobjects";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  const gridBox = await page.evaluate(`(() => {
+    const r = document.querySelector("#stickerGrid").getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  })()`);
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: gridBox.left + 18, y: gridBox.top + 18, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: gridBox.left + 18, y: gridBox.top + 18, button: "left", clickCount: 1 });
+  await waitForIdle();
+  const gridSticker = await page.evaluate("window.vlogHUD.stickers.at(-1)");
+  check("从图集网格加入贴纸", (await page.evaluate("window.vlogHUD.stickers.length")) === 2 && gridSticker.kind === "sheet",
+    gridSticker?.label);
+
+  // 从素材库拖到画面（先切回道具分类，让素材按钮可见）
+  await page.evaluate(`(() => {
+    const select = document.querySelector("#stickerCategory");
+    select.value = "items";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  const dragStart = await page.evaluate(`(() => {
+    const el = document.querySelector('.sticker-asset[data-asset="items:coffee"]');
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  const stageRect = await page.evaluate(`(() => {
+    const r = document.querySelector("#previewStage").getBoundingClientRect();
+    return { left: r.left, top: r.top, width: r.width, height: r.height };
+  })()`);
+  const dropX = stageRect.left + stageRect.width * 0.3;
+  const dropY = stageRect.top + stageRect.height * 0.3;
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: dragStart.x, y: dragStart.y, button: "left", clickCount: 1 });
+  for (let i = 1; i <= 6; i++) {
+    await page.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: dragStart.x + (dropX - dragStart.x) * i / 6,
+      y: dragStart.y + (dropY - dragStart.y) * i / 6,
+      button: "left",
+      buttons: 1
+    });
+  }
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: dropX, y: dropY, button: "left", clickCount: 1 });
+  await waitForIdle();
+  const dropped = await page.evaluate("window.vlogHUD.stickers.at(-1)");
+  const countAfterDrag = await page.evaluate("window.vlogHUD.stickers.length");
+  check("从素材库拖到画面加入贴纸", countAfterDrag === 3 && dropped.asset === "items:coffee", dropped?.label);
+  check("拖放位置落在画布内", dropped.x > 0 && dropped.x < 1920 && dropped.y > 0 && dropped.y < 1080,
+    Math.round(dropped.x) + "," + Math.round(dropped.y));
+
+  // 撤销缩放/移动与删除
+  await page.evaluate("window.vlogHUD.undo()");
+  await waitForIdle();
+  check("撤销贴纸操作", (await page.evaluate("window.vlogHUD.stickers.length")) <= 3);
+  await page.evaluate("window.vlogHUD.stickers.length && (window.vlogHUD.selectedStickerId || 0)");
+  // 删除当前选中
+  await page.click("#stickerDeleteButton");
+  await waitForIdle();
+  check("删除贴纸", (await page.evaluate("window.vlogHUD.stickers.length")) < 3,
+    String(await page.evaluate("window.vlogHUD.stickers.length")));
+
+  // 保存/加载保留贴纸
+  const serialized = await page.evaluate("window.vlogHUD.project.serialize()");
+  check("工程包含贴纸", Array.isArray(serialized.stickers) && serialized.stickers.length > 0,
+    serialized.stickers.length + " 个");
+  const roundTrip = await page.evaluate(`(async () => {
+    const project = window.vlogHUD.project.serialize();
+    await window.vlogHUD.project.load(project);
+    return window.vlogHUD.stickers.length;
+  })()`);
+  check("加载工程恢复贴纸", roundTrip === serialized.stickers.length, roundTrip + " 个");
+
+  // 清空
+  await page.click('[data-inspector-tab="stickers"]');
+  await page.click("#stickerClearButton");
+  await waitForIdle();
+  check("清空全部贴纸", (await page.evaluate("window.vlogHUD.stickers.length")) === 0);
+};
+
+suites.prefs = async () => {
+  await reload();
+  await page.evaluate(`(() => {
+    document.querySelector('[data-library-tab="stickers"]').click();
+    document.querySelector('[data-inspector-tab="layers"]').click();
+    const auto = document.querySelector("#autoKeyInput");
+    auto.checked = false;
+    auto.dispatchEvent(new Event("change", { bubbles: true }));
+    const smooth = document.querySelector("#smoothInput");
+    smooth.checked = false;
+    smooth.dispatchEvent(new Event("change", { bubbles: true }));
+    const prompt = document.querySelector("#aiPromptInput");
+    prompt.value = "偏好持久化测试";
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  const handle = await page.evaluate(`(() => {
+    const r = document.querySelector("#timelineResizeHandle").getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  await dragOnPage(handle, { x: handle.x, y: handle.y - 60 }, 4);
+  await page.evaluate(`(() => {
+    const cat = document.querySelector("#stickerCategory");
+    cat.value = "tools";
+    cat.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await page.click('.sticker-grid');
+  await waitForIdle();
+  await page.evaluate(`(() => {
+    const cat = document.querySelector("#stickerCategory");
+    cat.value = "items";
+    cat.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  await page.click('.sticker-asset[data-asset="items:coffee"]');
+  await page.evaluate("new Promise((r) => setTimeout(r, 1800))");
+
+  const before = await page.evaluate(`(() => ({
+    tab: document.querySelector("#inspectorPanel").dataset.activeTab,
+    library: document.querySelector('.library-tab.active').dataset.libraryTab,
+    autoKey: document.querySelector("#autoKeyInput").checked,
+    smooth: document.querySelector("#smoothInput").checked,
+    prompt: document.querySelector("#aiPromptInput").value,
+    dock: Math.round(document.querySelector("#timelineDock").getBoundingClientRect().height),
+    stickers: window.vlogHUD.stickers.length
+  }))()`);
+
+  await reload({ keepStorage: true });
+  await page.waitFor("window.vlogHUD.stickers.length > 0", { label: "自动恢复工程", timeout: 8000 }).catch(() => {});
+  const after = await page.evaluate(`(() => ({
+    tab: document.querySelector("#inspectorPanel").dataset.activeTab,
+    library: document.querySelector('.library-tab.active').dataset.libraryTab,
+    autoKey: document.querySelector("#autoKeyInput").checked,
+    smooth: document.querySelector("#smoothInput").checked,
+    prompt: document.querySelector("#aiPromptInput").value,
+    dock: Math.round(document.querySelector("#timelineDock").getBoundingClientRect().height),
+    stickers: window.vlogHUD.stickers.length,
+    toast: document.querySelector("#toast").textContent
+  }))()`);
+  check("重开后恢复检查器页签", after.tab === before.tab, before.tab + " → " + after.tab);
+  check("重开后恢复素材库页签", after.library === before.library, before.library + " → " + after.library);
+  check("重开后恢复自动关键帧/平滑开关", after.autoKey === before.autoKey && after.smooth === before.smooth);
+  check("重开后恢复 AI 提示词", after.prompt === before.prompt, after.prompt);
+  check("重开后恢复时间轴高度", near(after.dock, before.dock, 4), before.dock + " → " + after.dock);
+  check("重开后自动恢复上次工程", after.stickers === before.stickers && after.stickers > 0,
+    before.stickers + " → " + after.stickers + " · " + after.toast);
+  check("自动恢复给出提示", /已恢复上次工程/.test(after.toast), after.toast);
+
+  await page.evaluate("window.vlogHUD.newProject()");
+  await waitForIdle();
+  const cleared = await page.evaluate(`(() => ({
+    stickers: window.vlogHUD.stickers.length,
+    keyframes: window.vlogHUD.keyframes.length,
+    autosave: Boolean(localStorage.getItem("stardew-vlog-hud.autosave.v2"))
+  }))()`);
+  check("新建空工程清空内容", cleared.stickers === 0 && cleared.keyframes === 1 && cleared.autosave === false,
+    JSON.stringify(cleared));
+};
+
 async function main() {
   await rm(shotsDir, { recursive: true, force: true });
   await rm(tmpDir, { recursive: true, force: true });
@@ -1261,7 +1493,7 @@ async function main() {
   const browser = await Browser.launch({ headless: !headed });
   page = await browser.newPage({ width: 1500, height: 980 });
   try {
-    const order = ["baseline", "shell", "timeline", "timelineEdge", "autokey", "history", "shortcuts", "project", "projectDeep", "layers", "controls", "robustness", "export", "compact"];
+    const order = ["baseline", "shell", "timeline", "timelineEdge", "autokey", "history", "shortcuts", "stickers", "project", "projectDeep", "layers", "controls", "prefs", "robustness", "export", "compact"];
     const selected = wanted.length ? order.filter((name) => wanted.includes(name)) : order;
     await reload();
     for (const name of selected) {

@@ -2,19 +2,22 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
-const [spriteSource, itemsSource, appSource, dialogueText, smallText, tinyText, itemFiles] = await Promise.all([
+const [spriteSource, itemsSource, appSource, dialogueText, smallText, tinyText, itemFiles, uiFiles] = await Promise.all([
   readFile(root + "/spritefont.js", "utf8"),
   readFile(root + "/items.js", "utf8"),
   readFile(root + "/app.js", "utf8"),
   readFile(root + "/assets/stardew/SpriteFont1-zh-CN.json", "utf8"),
   readFile(root + "/assets/stardew/SmallFont-zh-CN.json", "utf8"),
   readFile(root + "/assets/stardew/tinyFont.json", "utf8"),
-  readdir(root + "/assets/items")
+  readdir(root + "/assets/items"),
+  readdir(root + "/assets/ui")
 ]);
 
 function dataUrl(buffer) {
   return "data:image/png;base64," + buffer.toString("base64");
 }
+
+const stickerSheetNames = ["springobjects", "Craftables", "tools", "weapons", "BuffsIcons", "Objects_2"];
 
 const assetData = {
   cursors: dataUrl(await readFile(root + "/assets/stardew/Cursors.png")),
@@ -28,6 +31,14 @@ const assetData = {
   items: Object.fromEntries(await Promise.all(itemFiles.filter((name) => name.endsWith(".png")).map(async (name) => [
     name.replace(/\.png$/i, ""),
     dataUrl(await readFile(root + "/assets/items/" + name))
+  ]))),
+  sheets: Object.fromEntries(await Promise.all(stickerSheetNames.map(async (name) => [
+    name,
+    dataUrl(await readFile(root + "/assets/stardew/" + name + ".png"))
+  ]))),
+  ui: Object.fromEntries(await Promise.all(uiFiles.filter((name) => name.endsWith(".png")).map(async (name) => [
+    name.replace(/\.png$/i, ""),
+    dataUrl(await readFile(root + "/assets/ui/" + name))
   ])))
 };
 

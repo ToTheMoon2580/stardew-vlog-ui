@@ -184,6 +184,7 @@ node scripts/build-bundle.mjs
 | 画面 | §scene§ | 时间、天气、季节、日期、金币、体力、场景预设 |
 | 字幕 | §caption§ | 信息卡小标题与正文、显示开关 |
 | 图层 | §layers§ | 显隐、X/Y 坐标、缩放、替换图片与物品 |
+| 贴纸 | §stickers§ | 贴纸列表、坐标、大小、层级、删除/清空 |
 | AI 生图 | §ai§ | OpenAI 图片生成 |
 
 - 导出是 §<dialog id="exportDialog">§：顶栏“导出成片”调用 §showModal()§，Esc 关闭；导出中按 Esc 先取消导出。
@@ -312,15 +313,15 @@ DOM 结构：
 - 顶部按钮和 §Ctrl+Z§ / §Ctrl+Shift+Z§ / §Ctrl+Y§ 都可用；按钮 title 显示将要撤销的操作名。
 - 视频文件信息不在历史里：导入视频不是可撤销的文档修改。
 
-## 11. 工程文件 v2
+## 11. 工程文件 v3
 
 保存结构：
 
 §§§json
 {
   "format": "stardew-vlog-hud",
-  "version": 2,
-  "savedAt": "2026-11-11T...",
+  "version": 3,
+  "savedAt": "2026-11-12T...",
   "layout": "landscape",
   "smooth": true,
   "autoKey": true,
@@ -328,25 +329,38 @@ DOM 结构：
   "video": { "name": "...", "size": 109113, "duration": 2.37, "width": 1920, "height": 1080, "fps": 30, "importedAt": "..." },
   "images": { "img-xxx": "data:image/png;base64,..." },
   "itemImages": { "phone": "data:image/png;base64,..." },
+  "stickers": [ { "id": "st-...", "kind": "sheet", "sheet": "springobjects", "sx": 0, "sy": 0, "sw": 16, "sh": 16, "label": "随手物 1-1", "x": 928, "y": 508, "scale": 4, "visible": true } ],
   "keyframes": [ { "at": 0, "...": "场景字段", "layers": { "clock": { "x": 1620, "y": 8, "scale": 1 } }, "images": { "clock": null } } ]
 }
 §§§
+
+### 贴纸
+
+贴纸是**工程级**对象（不随关键帧变化），按数组顺序绘制在 HUD 之上：
+
+- §kind: "sheet"§：从原版图集按 §sx/sy/sw/sh§ 取一块（§springobjects / Craftables / tools / weapons / BuffsIcons / Objects_2 / menu§）。
+- §kind: "asset"§：整张命名素材（§items:*§ 常用道具、§ui:*§ 界面零件）。
+- §x / y§ 是画布坐标，§scale§ 夹在 0.25–8；默认 16px 图块 4 倍、64px 图块 1 倍、命名素材 2 倍。
+- 渲染入口 §drawStickers()§，选区在 §updateSelectionBoxes()§ 里追加 §.sticker-selection[data-sticker-id]§。
+- 操作：从素材库点按或拖入画布、拖虚线框移动、拖右下角缩放；检查器“贴纸”页可改 X/Y/大小、上下移层、删除、清空。
+- 删除键在选中贴纸时删贴纸，否则删关键帧；Esc 先取消贴纸选中。
 
 ### 迁移
 
 §migrateProject(raw)§：
 
 - 格式不是 §stardew-vlog-hud§ → 报“不是有效的星露谷 Vlog 工程文件”。
-- §version > 2§ → 报错提示更新编辑器。
+- §version > 3§ → 报错提示更新编辑器。
 - §version 1§ → 自动迁移：§componentLayout§ 复制到每个关键帧的 §layers§；§customComponentImages§ 进入 §images§，id 为 §legacy-<组件名>§，并写到所有关键帧；补 §autoKey/snap/video§ 默认值。
+- §version ≤ 2§ → 补 §stickers: []§。
 - 迁移和加载都会丢弃非 §data:image/§ 的图片值，避免坏工程。
 
-### 自动保存
+### 自动保存与长期偏好
 
-- localStorage key：§stardew-vlog-hud.autosave.v2§。
-- 每次文档变化后 1.2 秒防抖写入。
-- 超过约 4.5MB 或存储抛错时自动关闭，并在控制台提示；手动保存不受影响。
-- 打开页面时若发现缓存，顶部出现提示条，可“恢复”或“忽略”。
+- 工程自动保存 localStorage key：§stardew-vlog-hud.autosave.v2§，每次文档变化后 1.2 秒防抖写入；超过约 4.5MB 或存储抛错时自动关闭。
+- 默认**启动即自动恢复**上次工程（含贴纸和替换图片），恢复后 toast 提示；可在导出弹窗取消“启动时恢复上次工程”，此时退回顶部提示条手动恢复。
+- “新建空工程”会清空关键帧、贴纸、替换图片和自动保存，保留已导入的视频。
+- 操作习惯存于 §stardew-vlog-hud.prefs.v1§（§loadPreferences/savePreferences§）：画幅、检查器页签、素材库页签、贴纸分类、时间轴高度、自动关键帧/吸附/平滑、工具组与物品、AI 模型/提示词/目标、背景照片（≤1.6MB 时存 Data URL）、自动恢复开关。写回 300ms 防抖。
 
 ### 视频提醒
 
@@ -369,9 +383,18 @@ DOM 结构：
 - §drawStamina()§
 - §drawToolbar()§
 - §drawCaption()§
+- §drawStickers()§（贴纸，画在 HUD 之上）
 - §drawDialogueBox()§
 - §drawTextureBox()§
 - §drawItem()§
+
+### 金币栏（按 1.6 源码还原）
+
+1.6 的金币显示在 §DayTimeMoneyBox§ 里，不在 HUD 主类：
+
+- 底板：§mouseCursors (340,472,65,17)§，画在组件局部坐标 §(28,172)§、4 倍。
+- 数字：§MoneyDial.draw(position + (68,196))§，固定 8 个数字槽，每格前进 §24px§；逐位取 §mouseCursors (286, 502 - digit*8, 5, 8)§，用 §Color.Maroon (#800000)§ 染色后 4 倍绘制。前导 0 不画但仍占槽位，所以数字天然右对齐。
+- 不要再用 SmallFont / 红色文字画金币，这是上一版的错误实现。§moneyDigitCanvas(digit)§ 里有按数字缓存好的染色小图。
 
 Canvas 固定逻辑尺寸：
 
@@ -494,15 +517,17 @@ node qa/screens.mjs             # 重新生成 qa/shots 下的参考截图
 | §autokey§ | 自动关键帧开/关两种写入路径、计数同步 |
 | §history§ | 撤销重做、快捷键、关键帧增删、图层拖动、至少保留一帧 |
 | §shortcuts§ | 空格、方向键、K、[ ]、Delete、Ctrl+Z、E、Ctrl+S |
-| §project§ | v2 保存、v1 迁移、图片库、文件加载、无视频提醒、顶栏摘要、自动保存与恢复 |
+| §stickers§ | 贴纸库切换、点击/拖拽加入、选中与选区、移动缩放、撤销删除、工程往返、清空 |
+| §project§ | v3 保存、v1 迁移、图片库、文件加载、无视频提醒、顶栏摘要、自动保存与自动恢复 |
 | §projectDeep§ | 画幅/图层坐标/替换图片/开关状态全量往返、v1 物品图片迁移 |
+| §prefs§ | 页签/开关/时间轴高度/AI 提示词持久化、自动恢复工程、新建空工程 |
 | §layers§ | 图层关键帧、插值、X/Y 输入、图片随帧切换、工程往返、无效工程 |
 | §controls§ | 天气/时间/季节/日期/金币/体力/字幕/显隐/工具组/道具/预设/画幅/背景照片/AI 表单 |
 | §robustness§ | 损坏视频、重复导入、连按空格、撤销重做连击、缩放上限、拖拽越界 |
 | §export§ | 导出中键盘隔离、取消导出、H.264 + AAC、横竖屏尺寸 |
 | §compact§ | 1180×760 与 1000×760 下的三栏/抽屉行为、比例、无溢出 |
 
-本轮基线：**169 项全部通过**（Edge 157 headless，`file://` 直接打开）。
+本轮基线：**194 项全部通过**（Edge 157 headless，`file://` 直接打开）。
 
 另有 HTTP 模式与 AI 代理检查（会自己启动静态服务器）：
 
@@ -518,7 +543,12 @@ node qa/http-check.mjs   # 8 项：HTTP 加载、HUD 绘制、无 Key/错误 Key
 
 - 页面无 JavaScript 运行时错误
 - 天气选项 7 个、工具组 6 个、物品按钮 17 个、场景预设 9 个
-- 三栏工作台 + 通栏时间轴，窄屏素材库收进抽屉
+- 三栏工作台 + 通栏时间轴，窄屏素材库收进抽屉；素材库分“视频与道具 / 贴纸素材”两页
+- 检查器 5 个页签（画面/字幕/图层/贴纸/AI）
+- 金币栏按 DayTimeMoneyBox/MoneyDial 还原：8 位数字槽、Maroon 像素数字、右对齐
+- 贴纸可从图集或命名素材点击/拖入画面，可移动、缩放、删除，随工程与自动保存持久化
+- 操作习惯（页签、时间轴高度、开关、AI 提示词、贴纸分类、背景照片）跨会话保留
+- 重新打开页面自动恢复上次工程，可关闭自动恢复或新建空工程
 - 4 个 HUD 选区，预览与 Canvas 比例一致
 - 时间轴默认高度 208px，可拖到 132–460px
 - 模块拖动、画幅切换与图层重映射有效

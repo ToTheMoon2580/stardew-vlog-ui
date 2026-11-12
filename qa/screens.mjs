@@ -50,6 +50,35 @@ try {
   await wait(250);
   await page.screenshot(path.join(outDir, prefix + "editor-portrait.png"));
 
+  // 贴纸
+  await page.evaluate(`(() => {
+    document.querySelector('[data-layout="landscape"]').click();
+    document.querySelector('[data-library-tab="stickers"]').click();
+  })()`);
+  await wait(250);
+  await page.evaluate(`(() => {
+    const select = document.querySelector("#stickerCategory");
+    select.value = "springobjects";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await wait(400);
+  const grid = await page.evaluate(`(() => {
+    const r = document.querySelector("#stickerGrid").getBoundingClientRect();
+    return { x: r.left + 40, y: r.top + 40 };
+  })()`);
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x: grid.x, y: grid.y, button: "left", clickCount: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: grid.x, y: grid.y, button: "left", clickCount: 1 });
+  await wait(300);
+  await page.evaluate(`(() => {
+    const select = document.querySelector("#stickerCategory");
+    select.value = "items";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await wait(300);
+  await page.click('.sticker-asset[data-asset="items:sunflower"]');
+  await wait(350);
+  await page.screenshot(path.join(outDir, prefix + "editor-stickers.png"));
+
   await page.evaluate(`(() => {
     document.querySelector('[data-layout="landscape"]').click();
     document.querySelector("#exportOpenButton").click();

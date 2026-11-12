@@ -53,7 +53,11 @@
           <h2>素材库</h2>
           <span class="panel-hint">LIBRARY</span>
         </div>
-        <div class="library-scroll">
+        <div class="library-tabs" role="tablist" aria-label="素材库分组">
+          <button class="library-tab active" type="button" data-library-tab="assets" aria-selected="true">视频与道具</button>
+          <button class="library-tab" type="button" data-library-tab="stickers" aria-selected="false">贴纸素材</button>
+        </div>
+        <div class="library-scroll" data-library-panel="assets">
           <section class="block">
             <h3 class="block-title">视频</h3>
             <label class="dropzone">
@@ -88,6 +92,31 @@
             </label>
             <div id="itemPicker" class="item-picker" aria-label="选择当前手持物"></div>
             <p class="file-line">当前：<strong id="selectedItemName">手机</strong></p>
+          </section>
+        </div>
+
+        <div class="library-scroll sticker-panel" data-library-panel="stickers" hidden>
+          <section class="block">
+            <h3 class="block-title">贴纸 · 原版素材</h3>
+            <label class="field">
+              <span>分类</span>
+              <select id="stickerCategory">
+                <option value="items">常用道具</option>
+                <option value="ui">界面零件</option>
+                <option value="springobjects">随手物（全图集）</option>
+                <option value="Craftables">可制作</option>
+                <option value="tools">工具</option>
+                <option value="weapons">武器</option>
+                <option value="BuffsIcons">增益图标</option>
+                <option value="Objects_2">物件</option>
+                <option value="menu">界面图块</option>
+              </select>
+            </label>
+            <div class="sticker-browser">
+              <canvas id="stickerGrid" class="sticker-grid" width="224" height="224"></canvas>
+              <div id="stickerAssets" class="sticker-assets" hidden></div>
+            </div>
+            <p id="stickerHint" class="hint">点一下加到画面中央，或把它拖进预览。</p>
           </section>
         </div>
       </aside>
@@ -136,6 +165,7 @@
           <button class="inspector-tab active" type="button" data-inspector-tab="scene" aria-selected="true">画面</button>
           <button class="inspector-tab" type="button" data-inspector-tab="caption" aria-selected="false">字幕</button>
           <button class="inspector-tab" type="button" data-inspector-tab="layers" aria-selected="false">图层</button>
+          <button class="inspector-tab" type="button" data-inspector-tab="stickers" aria-selected="false">贴纸</button>
           <button class="inspector-tab" type="button" data-inspector-tab="ai" aria-selected="false">AI 生图</button>
         </nav>
         <div id="frameSummary" class="frame-summary">
@@ -238,6 +268,33 @@
                 <input id="itemImageInput" type="file" accept="image/png,image/webp,image/jpeg" />
               </label>
             </div>
+          </section>
+
+          <section class="inspector-panel" data-panel="stickers" hidden>
+            <div class="panel-head">
+              <h2>贴纸图层</h2>
+              <span class="panel-hint">STICKERS</span>
+            </div>
+            <div id="stickerList" class="sticker-list"></div>
+            <div class="field-grid two">
+              <label class="field">X 坐标
+                <input id="stickerXInput" type="number" step="1" />
+              </label>
+              <label class="field">Y 坐标
+                <input id="stickerYInput" type="number" step="1" />
+              </label>
+            </div>
+            <label class="field range-field">
+              <span>贴纸大小 <output id="stickerScaleOutput">—</output></span>
+              <input id="stickerScaleInput" type="range" min="25" max="800" value="100" />
+            </label>
+            <div class="button-stack">
+              <button id="stickerUpButton" class="btn btn-ghost" type="button">上移一层</button>
+              <button id="stickerDownButton" class="btn btn-ghost" type="button">下移一层</button>
+              <button id="stickerDeleteButton" class="btn btn-ghost" type="button">删除所选贴纸</button>
+              <button id="stickerClearButton" class="btn btn-ghost" type="button">清空全部贴纸</button>
+            </div>
+            <p class="hint">贴纸会一直显示在整段视频上；拖动画布上的虚线框移动，拖右下角方块缩放。</p>
           </section>
 
           <section class="inspector-panel" data-panel="ai" hidden>
@@ -349,6 +406,13 @@
         <div class="project-row">
           <button id="saveProjectButton" class="btn btn-ghost" type="button">保存工程</button>
           <button id="projectLoadButton" class="btn btn-ghost" type="button">加载工程</button>
+        </div>
+        <div class="project-row">
+          <button id="newProjectButton" class="btn btn-ghost" type="button">新建空工程</button>
+          <label class="check-row compact">
+            <input id="autoRestoreInput" type="checkbox" checked />
+            <span>启动时恢复上次工程</span>
+          </label>
         </div>
         <p class="hint">工程会记录画幅、关键帧、图层位置、自定义图片和视频信息，不含原视频文件。</p>
       </div>

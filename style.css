@@ -379,6 +379,56 @@ button {
   scrollbar-width: thin;
 }
 
+.library-scroll[hidden] {
+  display: none;
+}
+
+.library-tabs {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--line);
+  background: #1a120b;
+}
+
+.library-tab {
+  height: 30px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-mute);
+  font-size: 11px;
+}
+
+.library-tab:last-child {
+  border-right: 0;
+}
+
+.library-tab.active {
+  background: var(--ink-2);
+  color: var(--brass-bright);
+  box-shadow: inset 0 -2px var(--brass);
+}
+
+.sticker-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.sticker-panel .block {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 0;
+}
+
+.sticker-panel .sticker-browser {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 160px;
+}
+
 .block {
   padding: 0 14px 14px;
   border-bottom: 1px solid var(--line);
@@ -561,6 +611,145 @@ button {
   border-color: var(--brass);
   background: #2c2010;
   box-shadow: inset 0 0 0 1px rgba(233, 193, 105, 0.35);
+}
+
+/* 贴纸浏览器 ---------------------------------------------------- */
+
+.sticker-browser {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #120c07;
+  scrollbar-color: #5a4128 transparent;
+  scrollbar-width: thin;
+}
+
+.sticker-grid {
+  display: block;
+  width: 100%;
+  cursor: grab;
+  image-rendering: pixelated;
+}
+
+.sticker-grid[hidden] {
+  display: none;
+}
+
+.sticker-assets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding: 6px;
+}
+
+.sticker-assets[hidden] {
+  display: none;
+}
+
+.sticker-asset {
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: #19110a;
+  color: var(--text-mute);
+  font-size: 9px;
+}
+
+.sticker-asset img {
+  width: 100%;
+  height: 42px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.sticker-asset span {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sticker-asset:hover {
+  border-color: var(--brass);
+  color: var(--text);
+}
+
+.sticker-list {
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  margin-bottom: 10px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.sticker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  background: #19110a;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: left;
+}
+
+.sticker-row img {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  background: #120c07;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.sticker-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sticker-row.active {
+  border-color: var(--brass);
+  background: #2a1e10;
+  color: var(--brass-bright);
+}
+
+.sticker-ghost {
+  position: fixed;
+  z-index: 90;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  pointer-events: none;
+  opacity: 0.85;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+}
+
+.sticker-ghost canvas {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.sticker-selection {
+  border-style: solid;
+  border-color: rgba(143, 174, 97, 0.85);
+}
+
+.sticker-selection.active {
+  border-color: var(--ok);
+  background: rgba(143, 174, 97, 0.08);
+}
+
+.sticker-selection span {
+  background: #1c2a14;
+  color: #d6e8b4;
 }
 
 /* Stage column --------------------------------------------------- */
@@ -900,7 +1089,7 @@ body.portrait .preview-stage {
 .inspector-tabs {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   border-bottom: 1px solid var(--line);
 }
 
