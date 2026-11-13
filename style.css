@@ -1974,6 +1974,38 @@ body.clean .selection-layer {
 }
 
 /* ---------------------------------------------------------------- */
+/* Image project (图片工程)                                          */
+/* ---------------------------------------------------------------- */
+
+body.media-image .timeline-dock,
+body.media-image .transport,
+body.media-image .reference-photo-block {
+  display: none;
+}
+
+body.media-image .video-preview {
+  display: none;
+}
+
+.image-media-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.image-media-controls[hidden] {
+  display: none;
+}
+
+.image-media-controls input[type="color"] {
+  width: 100%;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  background: #19110a;
+}
+
+/* ---------------------------------------------------------------- */
 /* Responsive                                                       */
 /* ---------------------------------------------------------------- */
 

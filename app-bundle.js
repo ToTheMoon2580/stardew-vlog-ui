@@ -307,7 +307,7 @@ const STICKER_ASSET_GROUPS = {
 const STICKER_SCALE_MIN = 0.05;
 const STICKER_SCALE_MAX = 50;
 const PROJECT_FORMAT = "stardew-vlog-hud";
-const PROJECT_VERSION = 3;
+const PROJECT_VERSION = 4;
 const AUTOSAVE_KEY = "stardew-vlog-hud.autosave.v2";
 const KEYFRAME_EPSILON = 0.045;
 const HISTORY_LIMIT = 120;
@@ -411,6 +411,22 @@ const ui = {
   redo: $("#redoButton"),
   photo: $("#photoInput"),
   clearPhoto: $("#clearPhotoButton"),
+  imageMediaInput: $("#imageMediaInput"),
+  imageMediaName: $("#imageMediaName"),
+  imageMediaControls: $("#imageMediaControls"),
+  imageFit: $("#imageFitInput"),
+  imageScale: $("#imageScaleInput"),
+  imageScaleOutput: $("#imageScaleOutput"),
+  imageOffsetX: $("#imageOffsetXInput"),
+  imageOffsetY: $("#imageOffsetYInput"),
+  imageBackground: $("#imageBackgroundInput"),
+  imageRemove: $("#removeImageMediaButton"),
+  imageExportBlock: $("#imageExportBlock"),
+  exportImage: $("#exportImageButton"),
+  imageExportStatus: $("#imageExportStatus"),
+  videoExportSection: $("#videoExportSection"),
+  exportHint: $("#exportHint"),
+  exportTitle: $("#exportTitle"),
   time: $("#timeInput"),
   weather: $("#weatherInput"),
   season: $("#seasonInput"),
@@ -501,6 +517,10 @@ let timelineInitialized = false;
 let selectedComponent = "clock";
 let videoMeta = null;
 let expectedVideo = null;
+// 媒体层：整个工程要么是视频工程，要么是图片工程；游戏元素永远叠在媒体层之上
+let mediaKind = "video";
+let imageMedia = null;
+let imageMediaEl = null;
 let autosaveTimer = 0;
 let autosaveAvailable = true;
 let autosaveCandidate = null;
@@ -1409,6 +1429,8 @@ function snapshotDocument() {
     images: { ...imageLibrary },
     itemImages: { ...customItemData },
     stickers: stickers.map((sticker) => ({ ...sticker })),
+    mediaKind,
+    imageMedia,
     selectedStickerId,
     smooth: ui.smooth.checked,
     autoKey: ui.autoKey.checked,
@@ -1481,6 +1503,16 @@ async function restoreDocument(snapshot) {
   ui.snap.checked = snapshot.snap !== false;
   stickers = (snapshot.stickers || []).map((sticker) => ({ ...sticker }));
   selectedStickerId = snapshot.selectedStickerId || null;
+  mediaKind = snapshot.mediaKind === "image" ? "image" : "video";
+  imageMedia = mediaKind === "image" ? snapshot.imageMedia || null : null;
+  imageMediaEl = null;
+  if (mediaKind === "image" && imageMedia) {
+    await ensureImageMediaElement();
+    if (!imageMediaEl) {
+      mediaKind = "video";
+      imageMedia = null;
+    }
+  }
   state.layout = snapshot.layoutMode === "portrait" ? "portrait" : "landscape";
   selectedKeyframeIndex = clampInt(snapshot.selectedKeyframeIndex, 0, Math.max(0, keyframes.length - 1), 0);
   for (const id of Object.keys(snapshot.images || {})) await ensureImageLoaded(id);
@@ -1585,6 +1617,10 @@ function commitLiveState(label, options = {}) {
 }
 
 function addKeyframeAtPlayhead() {
+  if (mediaKind === "image") {
+    showToast("图片工程不需要关键帧");
+    return;
+  }
   if (!ui.video.src) {
     showToast("请先导入视频，再在时间轴上打关键帧");
     return;
@@ -1621,6 +1657,10 @@ function flashSelectedKeyframe() {
 }
 
 function deleteSelectedKeyframe() {
+  if (mediaKind === "image") {
+    showToast("图片工程没有关键帧");
+    return;
+  }
   if (keyframes.length <= 1) {
     showToast("至少保留一个关键帧");
     return;
@@ -1765,9 +1805,11 @@ function updateTimelineMeta(seconds) {
   ui.currentTime.textContent = formatTimelineTime(playhead);
   ui.duration.textContent = formatTimelineTime(videoDuration());
   const onFrame = findFrameIndexAt(playhead) >= 0;
-  ui.keyframeCount.textContent = keyframes.length === 1 && !ui.video.src
-    ? "初始场景 · 导入视频后可打关键帧"
-    : keyframes.length + " 个关键帧" + (onFrame ? " · 当前帧" : "");
+  ui.keyframeCount.textContent = mediaKind === "image"
+    ? "静态图片 · 无需关键帧"
+    : keyframes.length === 1 && !ui.video.src
+      ? "初始场景 · 导入视频后可打关键帧"
+      : keyframes.length + " 个关键帧" + (onFrame ? " · 当前帧" : "");
   ui.exportProgress.max = Math.max(0.01, videoDuration());
   ui.exportProgress.value = Math.min(playhead, Math.max(0.01, videoDuration()));
   renderTimeline();
@@ -1778,6 +1820,11 @@ function updateTimelineMeta(seconds) {
 
 function syncVideoClip() {
   if (!ui.videoClip) return;
+  if (mediaKind === "image") {
+    ui.videoClip.hidden = true;
+    ui.dock.classList.remove("no-video");
+    return;
+  }
   const duration = videoDuration();
   const hasVideo = Boolean(ui.video.src) && duration > 0;
   ui.videoClip.hidden = !hasVideo;
@@ -2330,6 +2377,7 @@ function render(shouldSync = true) {
     return;
   }
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawMediaLayer();
   drawClock();
   drawStamina();
   drawToolbar();
@@ -2338,6 +2386,7 @@ function render(shouldSync = true) {
   if (shouldSync) {
     syncControls();
     syncLayerControls();
+    syncMediaUI();
   }
   renderTimeline();
   updateSelectionBoxes();
@@ -2733,6 +2782,10 @@ async function loadVideoFile(file) {
     fps: videoMeta?.fps ?? null,
     importedAt: new Date().toISOString()
   };
+  mediaKind = "video";
+  imageMedia = null;
+  imageMediaEl = null;
+  document.body.classList.remove("media-image");
   ui.video.currentTime = 0;
   if (!timelineInitialized) resetTimeline();
   timelineInitialized = true;
@@ -2754,8 +2807,225 @@ function videoMetaMatches(meta) {
   return meta.name === videoMeta.name && durationClose;
 }
 
+/* ------------------------------------------------------------------ */
+/* Image media (图片工程)                                              */
+/* ------------------------------------------------------------------ */
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("读取文件失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+// 画布输出最大 1920×1080 / 1080×1920，长边留到 2160 足够；大图压一压，工程和自动保存才不会爆
+async function prepareMediaDataUrl(image, fileType) {
+  const maxSide = 2160;
+  const naturalWidth = image.naturalWidth || image.width;
+  const naturalHeight = image.naturalHeight || image.height;
+  const factor = Math.min(1, maxSide / Math.max(1, Math.max(naturalWidth, naturalHeight)));
+  const width = Math.max(1, Math.round(naturalWidth * factor));
+  const height = Math.max(1, Math.round(naturalHeight * factor));
+  if (factor === 1 && fileType === "image/png") {
+    const source = await fileToDataUrlFromImage(image);
+    if (source.length < 1_400_000) return source;
+  }
+  const scratch = document.createElement("canvas");
+  scratch.width = width;
+  scratch.height = height;
+  const scratchContext = scratch.getContext("2d");
+  scratchContext.imageSmoothingQuality = "high";
+  scratchContext.drawImage(image, 0, 0, width, height);
+  if (fileType === "image/png") {
+    const png = scratch.toDataURL("image/png");
+    if (png.length < 1_400_000) return png;
+  }
+  return scratch.toDataURL("image/jpeg", 0.9);
+}
+
+function fileToDataUrlFromImage(image) {
+  if (!image.src || !image.src.startsWith("data:image/")) return Promise.resolve("");
+  return Promise.resolve(image.src);
+}
+
+async function loadImageMediaFile(file) {
+  if (!file) return;
+  if (!String(file.type || "").startsWith("image/")) {
+    showToast("请选择 PNG / JPG / WebP 图片");
+    return;
+  }
+  let element;
+  try {
+    element = await loadCustomImage(await fileToDataUrl(file));
+  } catch (error) {
+    console.warn("图片解码失败", error);
+    showToast("浏览器无法读取这张图片");
+    return;
+  }
+  let dataUrl = "";
+  try {
+    dataUrl = await prepareMediaDataUrl(element, file.type);
+  } catch (error) {
+    console.warn("图片压缩失败，退回原始数据", error);
+    dataUrl = element.src;
+  }
+  if (!dataUrl) {
+    showToast("图片处理失败，请换一张试试");
+    return;
+  }
+  if (ui.video.src && !ui.video.paused) {
+    try {
+      ui.video.pause();
+    } catch {
+      // ignore
+    }
+  }
+  recordHistory("导入图片", { immediate: true });
+  mediaKind = "image";
+  imageMediaEl = element;
+  imageMedia = {
+    name: file.name,
+    width: element.naturalWidth,
+    height: element.naturalHeight,
+    fit: "cover",
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    background: "#000000",
+    dataUrl
+  };
+  playhead = 0;
+  applyTimelineTime(0);
+  updateTimelineMeta(0);
+  updateProjectMeta();
+  scheduleAutosave();
+  render();
+  syncMediaUI();
+  showToast("图片已导入，可以往画面上叠 HUD 和贴纸了");
+}
+
+function normalizeImageMedia(raw) {
+  if (!raw || typeof raw !== "object" || raw.kind !== "image") return { kind: "video" };
+  const dataUrl = typeof raw.dataUrl === "string" && raw.dataUrl.startsWith("data:image/") ? raw.dataUrl : "";
+  if (!dataUrl) return { kind: "video" };
+  return {
+    kind: "image",
+    name: String(raw.name || "图片").slice(0, 160),
+    width: Math.max(1, Math.round(Number(raw.width) || 0)),
+    height: Math.max(1, Math.round(Number(raw.height) || 0)),
+    fit: raw.fit === "contain" ? "contain" : "cover",
+    scale: clamp(Number(raw.scale) || 1, 0.25, 4),
+    offsetX: clamp(Number(raw.offsetX) || 0, -4000, 4000),
+    offsetY: clamp(Number(raw.offsetY) || 0, -4000, 4000),
+    background: /^#[0-9a-f]{6}$/i.test(raw.background || "") ? raw.background : "#000000",
+    dataUrl
+  };
+}
+
+async function ensureImageMediaElement() {
+  if (!imageMedia?.dataUrl) {
+    imageMediaEl = null;
+    return null;
+  }
+  if (imageMediaEl && imageMediaEl.src === imageMedia.dataUrl) return imageMediaEl;
+  try {
+    imageMediaEl = await loadCustomImage(imageMedia.dataUrl);
+  } catch (error) {
+    console.warn("图片媒体解码失败", error);
+    imageMediaEl = null;
+  }
+  return imageMediaEl;
+}
+
+function updateImageMedia(patch, label = "调整图片") {
+  if (mediaKind !== "image" || !imageMedia) return;
+  recordHistory(label);
+  imageMedia = { ...imageMedia, ...patch };
+  touchDocument();
+  render();
+  syncMediaUI();
+}
+
+function removeImageMedia() {
+  if (mediaKind !== "image") return;
+  recordHistory("移除图片", { immediate: true });
+  mediaKind = "video";
+  imageMedia = null;
+  imageMediaEl = null;
+  playhead = 0;
+  applyTimelineTime(0);
+  updateTimelineMeta(0);
+  updateProjectMeta();
+  scheduleAutosave();
+  render();
+  syncMediaUI();
+  showToast("已回到视频工程");
+}
+
+function drawMediaLayer() {
+  if (mediaKind !== "image" || !imageMediaEl || state.clean) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.save();
+  ctx.fillStyle = imageMedia.background || "#000000";
+  ctx.fillRect(0, 0, width, height);
+  const naturalWidth = imageMediaEl.naturalWidth || imageMedia.width || width;
+  const naturalHeight = imageMediaEl.naturalHeight || imageMedia.height || height;
+  const ratio = imageMedia.fit === "contain"
+    ? Math.min(width / naturalWidth, height / naturalHeight)
+    : Math.max(width / naturalWidth, height / naturalHeight);
+  const drawWidth = naturalWidth * ratio * imageMedia.scale;
+  const drawHeight = naturalHeight * ratio * imageMedia.scale;
+  const x = (width - drawWidth) / 2 + imageMedia.offsetX;
+  const y = (height - drawHeight) / 2 + imageMedia.offsetY;
+  ctx.drawImage(imageMediaEl, x, y, drawWidth, drawHeight);
+  ctx.restore();
+}
+
+function syncMediaUI() {
+  const active = mediaKind === "image" && Boolean(imageMedia);
+  document.body.classList.toggle("media-image", active);
+  if (ui.imageMediaName) {
+    ui.imageMediaName.textContent = active
+      ? "当前：图片 " + imageMedia.name + " · " + imageMedia.width + "×" + imageMedia.height
+      : "当前：视频工程";
+  }
+  if (ui.imageMediaControls) ui.imageMediaControls.hidden = !active;
+  if (active) {
+    if (ui.imageFit) ui.imageFit.value = imageMedia.fit;
+    if (ui.imageScale) ui.imageScale.value = String(Math.round(imageMedia.scale * 100));
+    if (ui.imageScaleOutput) ui.imageScaleOutput.textContent = Math.round(imageMedia.scale * 100) + "%";
+    if (ui.imageOffsetX && document.activeElement !== ui.imageOffsetX) ui.imageOffsetX.value = String(Math.round(imageMedia.offsetX));
+    if (ui.imageOffsetY && document.activeElement !== ui.imageOffsetY) ui.imageOffsetY.value = String(Math.round(imageMedia.offsetY));
+    if (ui.imageBackground) ui.imageBackground.value = imageMedia.background;
+  }
+  ui.exportOpen.disabled = active ? false : !ui.video.src;
+  ui.exportOpen.title = active ? "导出 PNG 图片" : "导出整段动画";
+  ui.exportOpen.textContent = active ? "导出图片" : "导出成片";
+  if (active) {
+    ui.addKeyframe.disabled = true;
+    ui.addKeyframe.title = "图片工程不需要关键帧";
+    ui.addKeyframeDock.disabled = true;
+    ui.addKeyframeDock.title = "图片工程不需要关键帧";
+  }
+  if (ui.exportHint) ui.exportHint.textContent = active ? "EXPORT · PNG" : "EXPORT · MP4";
+  if (ui.videoExportSection) ui.videoExportSection.hidden = active;
+  if (ui.imageExportBlock) ui.imageExportBlock.hidden = !active;
+  if (ui.exportTitle) ui.exportTitle.textContent = active ? "导出图片" : "导出成片";
+  if (ui.exportSummary && active) {
+    const size = canvasSizeFor(state.layout);
+    ui.exportSummary.textContent = "输出 PNG · " + size.width + "×" + size.height;
+  }
+}
+
 function updateVideoReminder() {
   if (!ui.videoReminder) return;
+  if (mediaKind === "image") {
+    ui.videoReminder.hidden = true;
+    return;
+  }
   const expected = expectedVideo;
   if (!expected) {
     ui.videoReminder.hidden = true;
@@ -2852,6 +3122,7 @@ function serializeProject() {
     autoKey: ui.autoKey.checked,
     snap: ui.snap.checked,
     video: videoMeta ? { ...videoMeta } : (expectedVideo ? { ...expectedVideo } : null),
+    media: mediaKind === "image" && imageMedia ? { kind: "image", ...imageMedia } : { kind: "video" },
     images: { ...imageLibrary },
     itemImages: { ...customItemData },
     stickers: stickers.map((sticker) => ({ ...sticker })),
@@ -2904,6 +3175,7 @@ function migrateProject(raw) {
     autoKey: project.autoKey !== false,
     snap: project.snap !== false,
     video: normalizeVideoMeta(project.video),
+    media: normalizeImageMedia(project.media),
     images: sanitizeImageMap(project.images),
     itemImages: sanitizeImageMap(project.itemImages),
     stickers: Array.isArray(project.stickers) ? project.stickers : [],
@@ -2947,6 +3219,16 @@ async function applyProjectObject(rawProject, options = {}) {
   keyframes = frames;
   stickers = (project.stickers || []).map(normalizeSticker).filter(Boolean);
   selectedStickerId = null;
+  mediaKind = project.media?.kind === "image" ? "image" : "video";
+  imageMedia = mediaKind === "image" ? normalizeImageMedia(project.media) : null;
+  imageMediaEl = null;
+  if (mediaKind === "image") {
+    await ensureImageMediaElement();
+    if (!imageMediaEl) {
+      mediaKind = "video";
+      imageMedia = null;
+    }
+  }
   selectedKeyframeIndex = 0;
   expectedVideo = project.video;
   componentLayout = structuredClone(keyframes[0].layers);
@@ -3000,6 +3282,12 @@ async function loadProjectFile(file) {
 
 function updateProjectMeta() {
   if (!ui.projectMeta) return;
+  if (mediaKind === "image" && imageMedia) {
+    const mediaText = imageMedia.name + " · " + imageMedia.width + "×" + imageMedia.height;
+    ui.projectMeta.textContent = "图片工程 · " + mediaText + " · " + stickers.length + " 个贴纸";
+    if (ui.topbarMeta) ui.topbarMeta.textContent = mediaText + " · 静态图片";
+    return;
+  }
   const reference = videoMeta || expectedVideo;
   const video = reference
     ? reference.name + " · " + formatTimelineTime(reference.duration) + " · " + reference.width + "×" + reference.height +
@@ -3184,6 +3472,10 @@ function newProject() {
   componentImageIds = { clock: null, stamina: null, toolbar: null, caption: null };
   stickers = [];
   selectedStickerId = null;
+  mediaKind = "video";
+  imageMedia = null;
+  imageMediaEl = null;
+  document.body.classList.remove("media-image");
   resetComponentLayout(state.layout);
   resetTimeline();
   selectedKeyframeIndex = 0;
@@ -3514,6 +3806,36 @@ function cancelExport() {
   }
 }
 
+async function exportImage() {
+  if (mediaKind !== "image" || !imageMedia) {
+    showToast("请先导入图片");
+    return;
+  }
+  if (isExporting) {
+    showToast("正在导出视频，请稍候");
+    return;
+  }
+  render();
+  const size = canvasSizeFor(state.layout);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) {
+    if (ui.imageExportStatus) ui.imageExportStatus.textContent = "导出失败：浏览器没有返回图片数据";
+    return;
+  }
+  const download = document.createElement("a");
+  const name = "stardew-vlog-" + Date.now() + ".png";
+  download.href = URL.createObjectURL(blob);
+  download.download = name;
+  document.body.append(download);
+  download.click();
+  download.remove();
+  setTimeout(() => URL.revokeObjectURL(download.href), 15000);
+  if (ui.imageExportStatus) {
+    ui.imageExportStatus.textContent = "已导出 " + name + "（" + Math.round(blob.size / 1024) + " KB · " + size.width + "×" + size.height + "）";
+  }
+  showToast("图片已导出");
+}
+
 async function exportVideo() {
   if (isExporting) {
     showToast("正在导出，请等待或点击取消");
@@ -3784,6 +4106,11 @@ function bindKeyboard() {
       else enterCleanPreview();
       return;
     }
+    if (mediaKind === "image" &&
+      (event.code === "Space" || event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key.toLowerCase() === "k")) {
+      event.preventDefault();
+      return;
+    }
     if (event.code === "Space") {
       event.preventDefault();
       playVideo();
@@ -3925,6 +4252,10 @@ function bindControls() {
   ui.videoInput.addEventListener("change", async () => {
     const file = ui.videoInput.files?.[0];
     if (!file) return;
+    if (mediaKind === "image" && !confirm("导入视频会切换到视频工程，当前图片会被移除。继续？")) {
+      ui.videoInput.value = "";
+      return;
+    }
     try {
       await loadVideoFile(file);
     } catch (error) {
@@ -3934,6 +4265,48 @@ function bindControls() {
   });
 
   ui.reimportVideo.addEventListener("click", () => ui.videoInput.click());
+
+  ui.imageMediaInput.addEventListener("change", async () => {
+    const file = ui.imageMediaInput.files?.[0];
+    if (!file) return;
+    try {
+      await loadImageMediaFile(file);
+    } catch (error) {
+      console.warn("导入图片失败", error);
+      showToast("导入图片失败：" + (error.message || "未知错误"));
+    } finally {
+      ui.imageMediaInput.value = "";
+    }
+  });
+  if (ui.imageFit) {
+    ui.imageFit.addEventListener("change", () => updateImageMedia({ fit: ui.imageFit.value === "contain" ? "contain" : "cover" }, "调整图片适配"));
+  }
+  if (ui.imageScale) {
+    ui.imageScale.addEventListener("input", () => {
+      updateImageMedia({ scale: clamp(Number(ui.imageScale.value) / 100, 0.25, 4) }, "缩放图片");
+    });
+  }
+  const bindImageOffset = (input, key) => {
+    if (!input) return;
+    input.addEventListener("input", () => {
+      const value = Number(input.value);
+      if (!Number.isFinite(value)) return;
+      updateImageMedia({ [key]: clamp(value, -4000, 4000) }, "移动图片");
+    });
+  };
+  bindImageOffset(ui.imageOffsetX, "offsetX");
+  bindImageOffset(ui.imageOffsetY, "offsetY");
+  if (ui.imageBackground) {
+    ui.imageBackground.addEventListener("input", () => {
+      const value = ui.imageBackground.value;
+      if (/^#[0-9a-f]{6}$/i.test(value)) updateImageMedia({ background: value }, "修改图片底色");
+    });
+  }
+  if (ui.imageRemove) ui.imageRemove.addEventListener("click", removeImageMedia);
+  if (ui.exportImage) ui.exportImage.addEventListener("click", () => exportImage().catch((error) => {
+    console.warn("导出图片失败", error);
+    if (ui.imageExportStatus) ui.imageExportStatus.textContent = "导出失败：" + (error.message || "未知错误");
+  }));
 
   ui.play.addEventListener("click", () => {
     playVideo().catch((error) => showToast(error.message));
@@ -4161,6 +4534,22 @@ window.vlogHUD = {
   },
   get videoMeta() {
     return videoMeta ? { ...videoMeta } : null;
+  },
+  get media() {
+    if (mediaKind === "image" && imageMedia) {
+      return {
+        kind: "image",
+        name: imageMedia.name,
+        width: imageMedia.width,
+        height: imageMedia.height,
+        fit: imageMedia.fit,
+        scale: imageMedia.scale,
+        offsetX: imageMedia.offsetX,
+        offsetY: imageMedia.offsetY,
+        background: imageMedia.background
+      };
+    }
+    return { kind: "video" };
   },
   get expectedVideo() {
     return expectedVideo ? { ...expectedVideo } : null;

@@ -54,7 +54,7 @@
           <span class="panel-hint">LIBRARY</span>
         </div>
         <div class="library-tabs" role="tablist" aria-label="素材库分组">
-          <button class="library-tab active" type="button" data-library-tab="assets" aria-selected="true">视频与道具</button>
+          <button class="library-tab active" type="button" data-library-tab="assets" aria-selected="true">视频 / 图片 / 道具</button>
           <button class="library-tab" type="button" data-library-tab="stickers" aria-selected="false">贴纸素材</button>
         </div>
         <div class="library-scroll" data-library-panel="assets">
@@ -74,6 +74,41 @@
           </section>
 
           <section class="block">
+            <h3 class="block-title">图片工程</h3>
+            <label class="dropzone is-compact">
+              <input id="imageMediaInput" type="file" accept="image/*" />
+              <span class="dropzone-plus" aria-hidden="true">＋</span>
+              <strong>导入图片</strong>
+              <small>PNG / JPG / WebP，作为画面底图</small>
+            </label>
+            <p id="imageMediaName" class="file-line">当前：视频工程</p>
+            <div id="imageMediaControls" class="image-media-controls" hidden>
+              <label class="field">适配
+                <select id="imageFitInput">
+                  <option value="cover">铺满裁切</option>
+                  <option value="contain">完整显示</option>
+                </select>
+              </label>
+              <label class="field range-field">
+                <span>图片缩放 <output id="imageScaleOutput">100%</output></span>
+                <input id="imageScaleInput" type="range" min="25" max="400" step="5" value="100" />
+              </label>
+              <div class="field-grid two">
+                <label class="field">X 偏移
+                  <input id="imageOffsetXInput" type="number" step="1" value="0" />
+                </label>
+                <label class="field">Y 偏移
+                  <input id="imageOffsetYInput" type="number" step="1" value="0" />
+                </label>
+              </div>
+              <label class="field">留白底色
+                <input id="imageBackgroundInput" type="color" value="#000000" />
+              </label>
+              <button id="removeImageMediaButton" class="link-button" type="button">移除图片，回到视频工程</button>
+            </div>
+          </section>
+
+          <section class="block reference-photo-block">
             <h3 class="block-title">背景照片</h3>
             <label class="dropzone is-compact">
               <input id="photoInput" type="file" accept="image/*" />
@@ -385,21 +420,31 @@
   <dialog id="exportDialog" class="export-dialog" aria-labelledby="exportTitle">
     <header class="dialog-head">
       <div>
-        <div class="panel-hint">EXPORT · MP4</div>
+        <div class="panel-hint" id="exportHint">EXPORT · MP4</div>
         <h2 id="exportTitle">导出成片</h2>
       </div>
       <button id="exportCloseButton" class="icon-button" type="button" aria-label="关闭导出面板">✕</button>
     </header>
     <div class="dialog-body">
       <p id="projectMeta" class="file-line">工程 v2 · 0 个关键帧 · 视频：未导入视频</p>
-      <div class="export-actions">
-        <button id="exportVideoButton" class="btn btn-primary wide" type="button">导出整段动画</button>
-        <button id="cancelExportButton" class="btn btn-danger" type="button" disabled>取消</button>
+      <div id="videoExportSection">
+        <div class="export-actions">
+          <button id="exportVideoButton" class="btn btn-primary wide" type="button">导出整段动画</button>
+          <button id="cancelExportButton" class="btn btn-danger" type="button" disabled>取消</button>
+        </div>
+        <p id="exportSummary" class="export-summary">0 个关键帧 · 00:00.00 · 1920×1080</p>
+        <progress id="exportProgress" class="export-progress" max="1" value="0"></progress>
+        <p id="exportStatus" class="hint">优先导出通用 MP4；浏览器不支持时自动改用 WebM。导出是实时录制，耗时约等于视频时长。</p>
+        <ol id="exportLog" class="export-log" aria-label="导出日志"></ol>
       </div>
-      <p id="exportSummary" class="export-summary">0 个关键帧 · 00:00.00 · 1920×1080</p>
-      <progress id="exportProgress" class="export-progress" max="1" value="0"></progress>
-      <p id="exportStatus" class="hint">优先导出通用 MP4；浏览器不支持时自动改用 WebM。导出是实时录制，耗时约等于视频时长。</p>
-      <ol id="exportLog" class="export-log" aria-label="导出日志"></ol>
+
+      <div id="imageExportBlock" hidden>
+        <div class="export-actions">
+          <button id="exportImageButton" class="btn btn-primary wide" type="button">导出 PNG 图片</button>
+        </div>
+        <p class="export-summary">输出当前画面（含 HUD 与贴纸），1920×1080 或 1080×1920 原尺寸 PNG。</p>
+        <p id="imageExportStatus" class="hint">工程里的图片会以压缩后的形式保存，原图不会上传到任何服务器。</p>
+      </div>
 
       <div class="dialog-section">
         <div class="panel-head">

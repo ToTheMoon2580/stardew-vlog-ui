@@ -131,14 +131,14 @@ async function canvasHash(x, y, w = 1, h = 1) {
   })()`);
 }
 
-async function makePngFile(filePath, color) {
+async function makePngFile(filePath, color, width = 32, height = 32) {
   const { writeFile } = await import("node:fs/promises");
   const canvasPng = await page.evaluate(`(() => {
     const canvas = document.createElement("canvas");
-    canvas.width = 32; canvas.height = 32;
+    canvas.width = ${Number(width)}; canvas.height = ${Number(height)};
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = ${JSON.stringify(color)};
-    ctx.fillRect(0, 0, 32, 32);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/png");
   })()`);
   await writeFile(filePath, Buffer.from(canvasPng.split(",")[1], "base64"));
@@ -580,7 +580,7 @@ suites.project = async () => {
   const file = await page.waitForFile(/\.json$/);
   const project = JSON.parse(await readFile(file, "utf8"));
   check("工程 JSON 可保存", project.format === "stardew-vlog-hud", "v" + project.version);
-  check("工程版本为 3", project.version === 3, String(project.version));
+  check("工程版本为 4", project.version === 4, String(project.version));
   check("工程记录视频元数据", Boolean(project.video && project.video.name), JSON.stringify(project.video));
   check("工程记录关键帧图层", Array.isArray(project.keyframes) && Boolean(project.keyframes[0].layers), "layers ok");
   await page.evaluate("document.querySelector('#exportDialog').close()");
@@ -605,7 +605,7 @@ suites.project = async () => {
     const result = window.vlogHUD.project.migrate(legacy);
     return { version: result.version, layers: result.keyframes[0].layers.clock };
   })()`);
-  check("v1 工程可迁移到当前版本", migrated.version === 3, "v" + migrated.version);
+  check("v1 工程可迁移到当前版本", migrated.version === 4, "v" + migrated.version);
   check("迁移后补充图层数据", Boolean(migrated.layers && Number.isFinite(migrated.layers.x)), JSON.stringify(migrated.layers));
 
   const legacyImage = await page.evaluate(`(() => {
@@ -1490,6 +1490,110 @@ suites.stickers = async () => {
   check("清空全部贴纸", (await page.evaluate("window.vlogHUD.stickers.length")) === 0);
 };
 
+suites.image = async () => {
+  await reload();
+  const beforeHash = await canvasHash(200, 200, 400, 300);
+  const photo = path.join(tmpDir, "media-photo.png");
+  await makePngFile(photo, "#3a6ea5", 800, 800);
+  await page.setFileInput("#imageMediaInput", [photo]);
+  await page.waitFor("window.vlogHUD.media.kind === 'image'", { label: "图片导入", timeout: 15000 });
+  await waitForIdle();
+  await page.evaluate("new Promise((r) => setTimeout(r, 300))");
+
+  const media = await page.evaluate(`(() => {
+    const timeline = document.querySelector("#timelineDock");
+    const transport = document.querySelector(".transport");
+    return {
+      media: window.vlogHUD.media,
+      bodyClass: document.body.className,
+      timelineHidden: getComputedStyle(timeline).display === "none",
+      transportHidden: getComputedStyle(transport).display === "none",
+      keyframeDisabled: document.querySelector("#addKeyframeDockButton").disabled,
+      exportEnabled: !document.querySelector("#exportOpenButton").disabled,
+      controlsHidden: document.querySelector("#imageMediaControls").hidden,
+      topbar: document.querySelector("#topbarMeta").textContent
+    };
+  })()`);
+  check("导入图片切换为图片工程", media.media.kind === "image" && media.media.name === "media-photo.png",
+    media.media.kind + " · " + media.media.name);
+  check("图片工程隐藏时间轴与播放条", media.timelineHidden === true && media.transportHidden === true);
+  check("图片工程禁用关键帧按钮", media.keyframeDisabled === true);
+  check("图片工程可以直接导出", media.exportEnabled === true && media.controlsHidden === false);
+  check("顶栏显示静态图片摘要", /静态图片/.test(media.topbar), media.topbar);
+
+  const afterHash = await canvasHash(200, 200, 400, 300);
+  check("图片绘制到画布", beforeHash !== afterHash, beforeHash + " → " + afterHash);
+
+  // 适配与缩放
+  await page.evaluate(`(() => {
+    const select = document.querySelector("#imageFitInput");
+    select.value = "contain";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  const containHash = await canvasHash(200, 200, 400, 300);
+  check("切换完整显示改变画面", containHash !== afterHash, containHash);
+  await page.evaluate(`(() => {
+    const input = document.querySelector("#imageScaleInput");
+    input.value = "150";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  })()`);
+  await waitForIdle();
+  check("图片缩放写入状态", (await page.evaluate("window.vlogHUD.media.scale")) === 1.5,
+    String(await page.evaluate("window.vlogHUD.media.scale")));
+
+  // 工程 v4 携带图片
+  const project = await page.evaluate("window.vlogHUD.project.serialize()");
+  check("工程 v4 携带图片媒体", project.version === 4 && project.media?.kind === "image" &&
+    String(project.media.dataUrl || "").startsWith("data:image/"),
+    "v" + project.version + " · " + String(project.media?.dataUrl || "").slice(0, 20) + "…");
+  const roundTrip = await page.evaluate(`(async () => {
+    const saved = window.vlogHUD.project.serialize();
+    await window.vlogHUD.project.load(saved);
+    return window.vlogHUD.media;
+  })()`);
+  check("加载工程恢复图片与适配设置", roundTrip.kind === "image" && roundTrip.fit === "contain" && roundTrip.scale === 1.5,
+    roundTrip.kind + " · " + roundTrip.fit + " · " + roundTrip.scale);
+
+  // 导出 PNG
+  await clearDownloads();
+  await page.evaluate("document.querySelector('#exportOpenButton').click()");
+  await waitForIdle();
+  const dialog = await page.evaluate(`(() => ({
+    hint: document.querySelector("#exportHint").textContent,
+    title: document.querySelector("#exportTitle").textContent,
+    imageBlockHidden: document.querySelector("#imageExportBlock").hidden,
+    videoBlockHidden: document.querySelector("#videoExportSection").hidden
+  }))()`);
+  check("导出弹窗切换为图片模式", dialog.hint === "EXPORT · PNG" && dialog.title === "导出图片" &&
+    dialog.imageBlockHidden === false && dialog.videoBlockHidden === true,
+    dialog.hint + " · " + dialog.title);
+  await page.evaluate("document.querySelector('#exportImageButton').click()");
+  const exported = await page.waitForFile(/\.png$/, { timeout: 15000 });
+  const exportedSize = (await import("node:fs/promises")).stat(exported).then((s) => s.size);
+  check("导出 PNG 文件", (await exportedSize) > 5000, exported.split(path.sep).pop());
+  await page.evaluate("document.querySelector('#exportCloseButton').click()");
+  await waitForIdle();
+
+  // 移除图片与撤销
+  await page.evaluate("document.querySelector('#removeImageMediaButton').click()");
+  await waitForIdle();
+  const removed = await page.evaluate(`(() => ({
+    media: window.vlogHUD.media,
+    timelineHidden: getComputedStyle(document.querySelector("#timelineDock")).display === "none"
+  }))()`);
+  check("移除图片回到视频工程", removed.media.kind === "video" && removed.timelineHidden === false);
+  await page.pressKey("z", { modifiers: 2 });
+  await waitForIdle();
+  check("撤销移除恢复图片", (await page.evaluate("window.vlogHUD.media.kind")) === "image");
+
+  // 自动保存后重开仍是图片工程
+  await page.evaluate("new Promise((r) => setTimeout(r, 1800))");
+  await reload({ keepStorage: true });
+  await page.waitFor("window.vlogHUD.media.kind === 'image'", { label: "自动恢复图片工程", timeout: 8000 }).catch(() => {});
+  check("重开后自动恢复图片工程", (await page.evaluate("window.vlogHUD.media.kind")) === "image");
+};
+
 suites.prefs = async () => {
   await reload();
   await page.evaluate(`(() => {
@@ -1578,7 +1682,7 @@ async function main() {
   const browser = await Browser.launch({ headless: !headed });
   page = await browser.newPage({ width: 1500, height: 980 });
   try {
-    const order = ["baseline", "shell", "timeline", "timelineEdge", "autokey", "history", "shortcuts", "stickers", "project", "projectDeep", "layers", "controls", "prefs", "robustness", "export", "compact"];
+    const order = ["baseline", "shell", "timeline", "timelineEdge", "autokey", "history", "shortcuts", "stickers", "image", "project", "projectDeep", "layers", "controls", "prefs", "robustness", "export", "compact"];
     const selected = wanted.length ? order.filter((name) => wanted.includes(name)) : order;
     await reload();
     for (const name of selected) {

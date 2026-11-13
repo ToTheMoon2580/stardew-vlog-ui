@@ -94,6 +94,22 @@ try {
   await page.screenshot(path.join(outDir, prefix + "editor-export.png"));
   await page.evaluate("document.querySelector('#exportDialog').close()");
 
+  // 图片工程：导入一张横屏图片，HUD 与贴纸直接叠上去
+  await page.evaluate(`(() => {
+    document.querySelector('[data-library-tab="assets"]').click();
+    document.querySelector('[data-layout="landscape"]').click();
+  })()`);
+  await wait(200);
+  await page.setFileInput("#imageMediaInput", [path.join(root, "previews", "photo-sample.jpg")]);
+  await page.waitFor("window.vlogHUD.media.kind === 'image'", { label: "图片工程" });
+  await wait(500);
+  await page.screenshot(path.join(outDir, prefix + "image-project.png"));
+  await page.evaluate(`document.querySelector('[data-layout="portrait"]').click()`);
+  await wait(400);
+  await page.screenshot(path.join(outDir, prefix + "image-project-portrait.png"));
+  await page.evaluate(`document.querySelector('[data-layout="landscape"]').click()`);
+  await wait(300);
+
   if (small) {
     await page.evaluate("document.body.classList.add('library-open')");
     await wait(250);

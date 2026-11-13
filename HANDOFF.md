@@ -159,9 +159,9 @@ node scripts/build-bundle.mjs
 │ 自动保存提示条（有缓存时出现）                               │
 ├──────────────┬───────────────────────────────┬───────────────┤
 │ 素材库 252px │ 监看台                        │ 检查器 336px  │
-│ 视频导入     │  画幅 16:9 / 9:16 + 尺寸      │ 画面 字幕     │
-│ 背景照片     │  HUD 预览（等比、可拖动组件）  │ 图层 AI 生图  │
-│ 工具组道具   │  播放控制 + 时间码 + 加关键帧  │ 当前状态摘要  │
+│ 视频 / 图片  │  画幅 16:9 / 9:16 + 尺寸      │ 画面 字幕     │
+│ 背景照片     │  HUD 预览（等比、可拖动组件）  │ 图层 贴纸     │
+│ 工具组道具   │  播放控制 + 时间码 + 加关键帧  │ AI 生图       │
 │ 快捷键       │                               │               │
 ├──────────────┴───────────────────────────────┴───────────────┤
 │ 时间轴（通栏、可拖高 132–460px）                             │
@@ -172,7 +172,8 @@ node scripts/build-bundle.mjs
 
 要点：
 
-- 顶栏 §.topbar§ 固定 52px；§#topbarMeta§ 显示当前视频名、时长、关键帧数。顶栏还有打开/保存工程，没有视频时“导出成片”自动禁用。
+- 顶栏 §.topbar§ 固定 52px；§#topbarMeta§ 显示当前视频名/图片名、时长/尺寸、关键帧数。顶栏还有打开/保存工程；没有视频且不是图片工程时“导出成片”自动禁用。
+- 图片工程（§body.media-image§）会隐藏时间轴、播放条和“背景照片”区块，顶栏导出按钮文案变成“导出图片”。
 - 三栏由 §.workspace§ 网格控制：§252px minmax(0,1fr) 336px§；≤1280px 收成 §224px … 300px§；≤1080px 素材库变成抽屉（§body.library-open§）。
 - 监看台用容器查询单位把 §#previewStage§ 锁在 16:9 或 9:16：§width: min(100cqw, calc(100cqh * 16 / 9))§，不要改回 §height:100% + max-width§ 的写法（会破坏比例）。
 - 时间轴高度由 CSS 变量 §--timeline-height§（默认 208px）控制，拖动 §#timelineResizeHandle§ 修改，夹在 132–460px。
@@ -194,7 +195,23 @@ node scripts/build-bundle.mjs
 - 移动/窄屏（≤860px）切到单列：监看台在上、检查器在下、时间轴吸底。
 - 所有控件都保留了原有 id，只有分页容器相关的 §#editorPanel / .editor-tab / .control-section§ 改成了 §#inspectorPanel / .inspector-tab / .inspector-panel§；批量改选择器时以 §app.js§ 顶部的 §ui§ 表为准。
 
-## 7. 数据模型（v2）
+## 7. 数据模型（v4）
+
+### 媒体层
+
+工程有且只有一个媒体：视频或图片。
+
+§§§text
+mediaKind   "video" | "image"（模块级）
+imageMedia  { name, width, height, fit, scale, offsetX, offsetY, background, dataUrl }  // 仅图片工程
+imageMediaEl 已解码的 HTMLImageElement（仅内存，不持久化）
+§§§
+
+- 图片工程的底图由 §drawMediaLayer()§ 直接画进 HUD 画布（在 HUD/贴纸之下），因此 PNG 导出只要 §canvas.toBlob()§。
+- §fit§：§cover§（铺满裁切，默认）/ §contain§（完整显示，留白用 §background§ 填充）。
+- §scale§ 夹在 0.25–4，§offsetX/offsetY§ 是画布像素偏移，正负 ±4000。
+- §state.clean§（OBS 透明模式）下**不画媒体**，保持页面透明；§clean-preview§（纯画面）照常画。
+- 导入视频时 §mediaKind = "video"§ 并清空图片；导入图片时暂停视频但保留视频元素，点“移除图片”可切回。
 
 ### 当前状态
 
@@ -315,26 +332,42 @@ DOM 结构：
 - 顶部按钮和 §Ctrl+Z§ / §Ctrl+Shift+Z§ / §Ctrl+Y§ 都可用；按钮 title 显示将要撤销的操作名。
 - 视频文件信息不在历史里：导入视频不是可撤销的文档修改。
 
-## 11. 工程文件 v3
+## 11. 工程文件 v4
 
 保存结构：
 
 §§§json
 {
   "format": "stardew-vlog-hud",
-  "version": 3,
-  "savedAt": "2026-11-12T...",
+  "version": 4,
+  "savedAt": "2026-11-13T...",
   "layout": "landscape",
   "smooth": true,
   "autoKey": true,
   "snap": true,
   "video": { "name": "...", "size": 109113, "duration": 2.37, "width": 1920, "height": 1080, "fps": 30, "importedAt": "..." },
+  "media": {
+    "kind": "image",
+    "name": "photo.jpg", "width": 1920, "height": 1080,
+    "fit": "cover", "scale": 1, "offsetX": 0, "offsetY": 0, "background": "#000000",
+    "dataUrl": "data:image/jpeg;base64,..."
+  },
   "images": { "img-xxx": "data:image/png;base64,..." },
   "itemImages": { "phone": "data:image/png;base64,..." },
   "stickers": [ { "id": "st-...", "kind": "sheet", "sheet": "springobjects", "sx": 0, "sy": 0, "sw": 16, "sh": 16, "label": "随手物 1-1", "x": 928, "y": 508, "scale": 4, "visible": true } ],
   "keyframes": [ { "at": 0, "...": "场景字段", "layers": { "clock": { "x": 1620, "y": 8, "scale": 1 } }, "images": { "clock": null } } ]
 }
 §§§
+
+视频工程的 §media§ 是 §{ "kind": "video" }§。
+
+### 图片媒体
+
+- 导入时用 §prepareMediaDataUrl()§ 处理：长边超过 2160 先等比缩小；PNG 且压缩后 < 1.4MB 就保留 PNG，否则转 JPEG 0.9。这样 4K 照片也不会把工程撑到几 MB。
+- 渲染用**原图**的 §imageMediaEl§（清晰），保存用压缩后的 §dataUrl§。
+- 图片工程仍然保留 §keyframes§（通常是 1 帧），切回视频工程时原关键帧还在。
+- 图片工程禁用：添加/删除关键帧、Space/方向键/K；时间轴和播放条通过 §body.media-image§ 隐藏。
+- 导出图片：§exportImage()§ → §canvas.toBlob("image/png")§ → 下载 §stardew-vlog-<时间戳>.png§。
 
 ### 贴纸
 
@@ -352,16 +385,18 @@ DOM 结构：
 §migrateProject(raw)§：
 
 - 格式不是 §stardew-vlog-hud§ → 报“不是有效的星露谷 Vlog 工程文件”。
-- §version > 3§ → 报错提示更新编辑器。
+- §version > 4§ → 报错提示更新编辑器。
 - §version 1§ → 自动迁移：§componentLayout§ 复制到每个关键帧的 §layers§；§customComponentImages§ 进入 §images§，id 为 §legacy-<组件名>§，并写到所有关键帧；补 §autoKey/snap/video§ 默认值。
 - §version ≤ 2§ → 补 §stickers: []§。
+- §version ≤ 3§ → 补 §media: { "kind": "video" }§。
+- §media.kind === "image"§ 但 §dataUrl§ 不是 §data:image/§ → 退回视频工程，避免坏工程白屏。
 - 迁移和加载都会丢弃非 §data:image/§ 的图片值，避免坏工程。
 
 ### 自动保存与长期偏好
 
 - 工程自动保存 localStorage key：§stardew-vlog-hud.autosave.v2§，每次文档变化后 1.2 秒防抖写入；超过约 4.5MB 或存储抛错时自动关闭。
-- 默认**启动即自动恢复**上次工程（含贴纸和替换图片），恢复后 toast 提示；可在导出弹窗取消“启动时恢复上次工程”，此时退回顶部提示条手动恢复。
-- “新建空工程”会清空关键帧、贴纸、替换图片和自动保存，保留已导入的视频。
+- 默认**启动即自动恢复**上次工程（含贴纸、替换图片和图片媒体），恢复后 toast 提示；可在导出弹窗取消“启动时恢复上次工程”，此时退回顶部提示条手动恢复。
+- “新建空工程”会清空关键帧、贴纸、替换图片、图片媒体和自动保存，保留已导入的视频。
 - 操作习惯存于 §stardew-vlog-hud.prefs.v1§（§loadPreferences/savePreferences§）：画幅、检查器页签、素材库页签、贴纸分类、时间轴高度、自动关键帧/吸附/平滑、工具组与物品、AI 模型/提示词/目标、背景照片（≤1.6MB 时存 Data URL）、自动恢复开关。写回 300ms 防抖。
 
 ### 视频提醒
@@ -379,8 +414,9 @@ DOM 结构：
 
 §render(shouldSync = true)§
 
-主要函数：
+主要函数（按绘制顺序）：
 
+- §drawMediaLayer()§（图片工程的底图，画在最底层；视频用 DOM §<video>§ 放在画布下面）
 - §drawClock()§
 - §drawStamina()§
 - §drawToolbar()§
@@ -520,7 +556,8 @@ node qa/screens.mjs             # 重新生成 qa/shots 下的参考截图
 | §history§ | 撤销重做、快捷键、关键帧增删、图层拖动、至少保留一帧 |
 | §shortcuts§ | 空格、方向键、K、[ ]、Delete、Ctrl+Z、E、Ctrl+S |
 | §stickers§ | 贴纸库切换、点击/拖拽加入、选中与选区、移动缩放、撤销删除、工程往返、清空 |
-| §project§ | v3 保存、v1 迁移、图片库、文件加载、无视频提醒、顶栏摘要、自动保存与自动恢复 |
+| §image§ | 导入图片切换工程、时间轴/关键帧收起、cover/contain、缩放、工程 v4 往返、导出 PNG、移除与撤销、自动恢复 |
+| §project§ | v4 保存、v1 迁移、图片库、文件加载、无视频提醒、顶栏摘要、自动保存与自动恢复 |
 | §projectDeep§ | 画幅/图层坐标/替换图片/开关状态全量往返、v1 物品图片迁移 |
 | §prefs§ | 页签/开关/时间轴高度/AI 提示词持久化、自动恢复工程、新建空工程 |
 | §layers§ | 图层关键帧、插值、X/Y 输入、图片随帧切换、工程往返、无效工程 |
@@ -529,7 +566,7 @@ node qa/screens.mjs             # 重新生成 qa/shots 下的参考截图
 | §export§ | 导出中键盘隔离、取消导出、H.264 + AAC、横竖屏尺寸 |
 | §compact§ | 1180×760 与 1000×760 下的三栏/抽屉行为、比例、无溢出 |
 
-本轮基线：**201 项全部通过**（Edge 157 headless，`file://` 直接打开）。
+本轮基线：**220 项全部通过**（Edge 157 headless，`file://` 直接打开）。
 
 另有 HTTP 模式与 AI 代理检查（会自己启动静态服务器）：
 
@@ -546,6 +583,7 @@ node qa/http-check.mjs   # 8 项：HTTP 加载、HUD 绘制、无 Key/错误 Key
 - 页面无 JavaScript 运行时错误
 - 天气选项 7 个、工具组 6 个、物品按钮 17 个、场景预设 9 个
 - 三栏工作台 + 通栏时间轴，窄屏素材库收进抽屉；素材库分“视频与道具 / 贴纸素材”两页
+- 图片工程：导入图片后时间轴收起、HUD 与贴纸可叠加、导出 PNG，移除后回到视频工程
 - 检查器 5 个页签（画面/字幕/图层/贴纸/AI）
 - 金币栏按 DayTimeMoneyBox/MoneyDial 还原：8 位数字槽、Maroon 像素数字、右对齐
 - 贴纸可从图集或命名素材点击/拖入画面，可移动、缩放、删除，随工程与自动保存持久化
@@ -557,7 +595,8 @@ node qa/http-check.mjs   # 8 项：HTTP 加载、HUD 绘制、无 Key/错误 Key
 - 检查器四个分页切换有效
 - 时间轴拖动、菱形改时间、缩放、双击新增有效
 - 撤销 / 重做（按钮与快捷键）有效
-- 工程 v3 保存 / 加载 / v1 迁移 / 自动保存有效
+- 工程 v4 保存 / 加载 / v1 迁移 / 自动保存有效
+- 图片工程保存与自动恢复有效，压缩后的底图随工程走
 - 图层位置与图片随关键帧变化有效
 - MP4 导出有效，横屏 1920×1080、竖屏 1080×1920
 - MP4 同时含 H.264 视频和 AAC 音频
